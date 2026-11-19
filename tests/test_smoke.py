@@ -8,9 +8,9 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "examples"))
 
-from img2stl import ImageToReliefPipeline, PipelineConfig, TextureLibrary  # noqa: E402
-from img2stl.stl_export import HeightfieldMesher  # noqa: E402
-from img2stl.relief import HeightField  # noqa: E402
+from img_to_stl import ImageToReliefPipeline, PipelineConfig, TextureLibrary  # noqa: E402
+from img_to_stl.stl_export import HeightfieldMesher  # noqa: E402
+from img_to_stl.relief import HeightField  # noqa: E402
 import make_demo_image  # noqa: E402
 
 
@@ -53,7 +53,7 @@ def test_pipeline_end_to_end():
 
 
 def test_transform_scale_stretch_rotation():
-    from img2stl import TextureTransform, TransformedTexture
+    from img_to_stl import TextureTransform, TransformedTexture
     rng = np.random.default_rng(0)
     x, y = rng.uniform(0, 30, 5000), rng.uniform(0, 30, 5000)
     base = TextureLibrary.create(3)
@@ -70,7 +70,7 @@ def test_transform_scale_stretch_rotation():
 
 
 def test_cad_roundtrip_stl_and_png():
-    from img2stl import TileTexture, export_texture_templates
+    from img_to_stl import TileTexture, export_texture_templates
     with tempfile.TemporaryDirectory() as d:
         export_texture_templates(d)
         rng = np.random.default_rng(1)

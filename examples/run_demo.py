@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from img2stl import ImageToReliefPipeline, PipelineConfig  # noqa: E402
+from img_to_stl import ImageToReliefPipeline, PipelineConfig  # noqa: E402
 import make_demo_image  # noqa: E402
 
 here = os.path.dirname(os.path.abspath(__file__))

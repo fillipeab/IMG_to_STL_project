@@ -1,4 +1,4 @@
-"""img2stl — imagem -> regiões/fronteiras/pontos -> relevo 2.5D texturizado -> STL."""
+"""img_to_stl — imagem -> regiões/fronteiras/pontos -> relevo 2.5D texturizado -> STL."""
 from .config import PipelineConfig, ReliefConfig, VisionConfig
 from .pipeline import ImageToReliefPipeline
 from .relief import HeightField, ReliefBuilder

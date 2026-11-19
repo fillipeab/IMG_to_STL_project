@@ -1,8 +1,8 @@
 """Linha de comando.
 
 Fluxo recomendado (2 passos):
-  1) python -m img2stl imagem.png --read-only -o saida        # gera regioes_preview.png com os ids
-  2) python -m img2stl imagem.png -o saida/peca.stl --textures 0=1,1=2,2=3,3=4
+  1) python -m img_to_stl imagem.png --read-only -o saida        # gera regioes_preview.png com os ids
+  2) python -m img_to_stl imagem.png -o saida/peca.stl --textures 0=1,1=2,2=3,3=4
 """
 from __future__ import annotations
 
@@ -10,13 +10,17 @@ import argparse
 import os
 import sys
 
-from .config import PipelineConfig
-from .pipeline import ImageToReliefPipeline
-from .textures import TextureLibrary
+if __package__ in (None, ""):   # rodado como arquivo (python img_to_stl/cli.py): sem pacote pai
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    __package__ = "img_to_stl"
+
+from .config import PipelineConfig  # noqa: E402
+from .pipeline import ImageToReliefPipeline  # noqa: E402
+from .textures import TextureLibrary  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="img2stl", description=__doc__,
+    p = argparse.ArgumentParser(prog="img_to_stl", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("image", nargs="?", help="imagem de entrada (png, jpg...)")
     p.add_argument("--export-textures", metavar="PASTA",

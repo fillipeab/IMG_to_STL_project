@@ -1,4 +1,4 @@
-# img_to_stl
+# img_to_stl_project
 
 Imagem → **regiões, fronteiras e pontos** → relevo 2.5D texturizado → **STL** para impressão 3D.
 

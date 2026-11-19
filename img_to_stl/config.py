@@ -13,7 +13,7 @@ from . import parametros as P
 
 # --------------------------------------------------------------------------- #
 # Parte 1 — leitura da imagem (visão computacional)
-# Os valores-padrão marcados com "parametros.py" vêm de img2stl/parametros.py.
+# Os valores-padrão marcados com "parametros.py" vêm de img_to_stl/parametros.py.
 # --------------------------------------------------------------------------- #
 @dataclass
 class VisionConfig:

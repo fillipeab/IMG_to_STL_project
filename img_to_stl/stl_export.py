@@ -32,7 +32,7 @@ class Mesh:
                 "vertices": n, "triangulos": len(f)}
 
     # ---- escrita ---- #
-    def save_stl(self, path: str, name: str = "img2stl") -> None:
+    def save_stl(self, path: str, name: str = "img_to_stl") -> None:
         tris = self.vertices[self.faces]                    # (M, 3, 3)
         normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
         length = np.linalg.norm(normals, axis=1, keepdims=True)
