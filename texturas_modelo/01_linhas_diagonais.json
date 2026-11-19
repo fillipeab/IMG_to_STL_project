@@ -1,0 +1,9 @@
+{
+  "tile_mm": [
+    10.0,
+    10.0
+  ],
+  "amplitude_mm": 0.6,
+  "plate_mm": 0.6,
+  "origem": "textura interna 1 (linhas diagonais)"
+}
