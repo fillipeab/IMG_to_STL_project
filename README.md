@@ -1,4 +1,4 @@
-# img2stl
+# img_to_stl
 
 Imagem → **regiões, fronteiras e pontos** → relevo 2.5D texturizado → **STL** para impressão 3D.
 
@@ -37,7 +37,7 @@ Parâmetros por textura em `relief.texture_params`, ex.: `{"2": {"mini_ratio": 0
 ## Parâmetros: onde mudar
 Três níveis, do mais simples ao mais pontual (o de baixo vence o de cima):
 1. **`img2stl/parametros.py`** — padrões principais, comentados um a um. Edite e rode de novo.
-2. **`--config arquivo.json`** — um conjunto de valores por projeto. `config_exemplo.json` e os arquivos gravados com `--save-config` trazem uma nota `"_parametro"` explicando cada valor (chaves com `_` são ignoradas ao ler).
+2. **`--config arquivo.json`** — um conjunto de valores por projeto. `config_exemplo.json` mostra o formato; o significado de cada parâmetro está no **Anexo** no fim deste arquivo.
 3. **Linha de comando** — `--width-mm`, `--max-regions`, `--tolerance`, `--resolution`, etc., só naquela execução.
 
 Parâmetros avançados (filtro de ruído, k-means, perfil dos traços, textura por região) ficam em
@@ -87,7 +87,14 @@ textura, inclusive as de CAD). Por região, em `relief.region_textures`:
 Nova textura: herde de `Texture`, implemente `height(x, y)` (0..1, x/y em mm), defina `texture_id` e
 registre com `TextureLibrary.register`.
 
-## Referência de parâmetros
+## Limites conhecidos
+- A grade é regular: áreas lisas também geram triângulos (sem decimação).
+- Regiões com a mesma cor, mas não vizinhas, são regiões separadas (cada uma recebe seu id).
+- Pensado para imagens de áreas de cor definidas (mapas, ilustrações). Fotos precisam de `max_regions` baixo.
+
+Testes: `python -m pytest tests` ou `python tests/test_smoke.py`
+
+## Anexo — Referência de parâmetros
 Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não está lá).
 
 ### Peça e resolução
@@ -169,10 +176,3 @@ Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não 
 | `warp_amplitude_mm`, `warp_wavelength_mm` | Ondulam o padrão ("tortinho"): quanto desloca e a cada quantos mm. |
 
 - Fronteiras são traçadas entre pixels: regiões vizinhas **compartilham exatamente a mesma curva**.
-
-## Limites conhecidos
-- A grade é regular: áreas lisas também geram triângulos (sem decimação).
-- Regiões com a mesma cor, mas não vizinhas, são regiões separadas (cada uma recebe seu id).
-- Pensado para imagens de áreas de cor definidas (mapas, ilustrações). Fotos precisam de `max_regions` baixo.
-
-Testes: `python -m pytest tests` ou `python tests/test_smoke.py`
