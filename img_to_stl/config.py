@@ -12,7 +12,7 @@ from . import parametros as P
 
 
 # --------------------------------------------------------------------------- #
-# Parte 1 — leitura da imagem (visão computacional)
+# Parte 1 — leitura da imagem (visão computacional): regiões e fronteiras
 # Os valores-padrão marcados com "parametros.py" vêm de img_to_stl/parametros.py.
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -50,8 +50,13 @@ class VisionConfig:
     # Quão próxima (ΔE) a região precisa ser de ignore_color para contar como fundo.
     ignore_tolerance: float = 15.0
 
+    # Traços/regiões mais finos que isso (mm) são apagados e preenchidos pela vizinhança (contornos
+    # pretos, serrilhado, texto fino). 0 = desligado. [parametros.py]
+    min_region_thickness_mm: float = P.ESPESSURA_MIN_REGIAO_MM
+
     # --- fronteiras ---
-    # Fronteiras mais curtas que isso (mm) não ganham cordão. [parametros.py]
+    # Fronteira mais curta que isso (mm) é encolhida: suas duas junções viram uma só, sem abrir
+    # fresta na rede de cordões. [parametros.py]
     min_border_length_mm: float = P.COMPRIMENTO_MIN_FRONTEIRA_MM
     # Suavização das curvas (desvio-padrão, mm): remove a "escada" dos pixels. Maior = mais redondo,
     # mas cantos reais ficam arredondados. [parametros.py]
@@ -62,13 +67,15 @@ class VisionConfig:
     # True = cordão também em volta de toda a peça (moldura). [parametros.py]
     outer_frame: bool = P.MOLDURA_EXTERNA
 
-    # --- pontos (encontros de 3+ regiões) ---
-    # Número mínimo de regiões que se encontram para marcar um ponto (3 = junção "em Y").
-    min_regions_at_point: int = 3
+    # --- pontos de intersecção (opcional) ---
+    # True = marca com um ponto cada encontro de 3+ regiões. Desligado por padrão. [parametros.py]
+    junction_points: bool = P.PONTOS_DE_INTERSECCAO
+    # Nº mínimo de regiões que se encontram para marcar um ponto (3 = junção em "Y"). [parametros.py]
+    min_regions_at_point: int = P.INTERSECCAO_MIN_REGIOES
     # Junções mais próximas que isso (mm) viram um ponto só. [parametros.py]
-    point_merge_dist_mm: float = P.PONTO_DIST_FUSAO_MM
-    # Se definido, mantém só os N pontos de maior valência (mais regiões). None = todos.
-    max_points: Optional[int] = None
+    point_merge_dist_mm: float = P.INTERSECCAO_DIST_FUSAO_MM
+    # Se definido, mantém só os N pontos de maior valência (mais regiões). None = todos. [parametros.py]
+    max_points: Optional[int] = P.INTERSECCAO_MAX_PONTOS
 
     # Semente do k-means: o mesmo valor reproduz exatamente o mesmo resultado.
     random_seed: int = 0
@@ -130,7 +137,7 @@ class ReliefConfig:
     # Altura da textura reduzida relativa à normal (0,6 = 60%). [parametros.py]
     exclusion_texture_height_factor: float = P.EXCLUSAO_ALTURA_FATOR
 
-    # --- pontos ---
+    # --- pontos (de interesse: capitais etc., ainda sem detecção; e de intersecção, opcionais) ---
     # Altura do ponto acima da base (mm). [parametros.py]
     point_height_mm: float = P.PONTO_ALTURA_MM
     # Diâmetro (círculo) ou lado (quadrado/triângulo), em mm. [parametros.py]
@@ -139,10 +146,11 @@ class ReliefConfig:
     point_flank_mm: float = P.PONTO_FLANCO_MM
     # Raio sem textura em volta do CENTRO do ponto (mm). Aumenta sozinho se a forma for maior. [parametros.py]
     point_exclusion_mm: float = P.PONTO_EXCLUSAO_MM
-    # Forma por valência (nº de regiões no ponto): "circle", "square" ou "triangle". [parametros.py]
-    point_shapes: Dict[int, str] = field(default_factory=lambda: dict(P.PONTO_FORMAS))
-    # Forma das valências que não aparecem em point_shapes. [parametros.py]
-    default_point_shape: str = P.PONTO_FORMA_PADRAO
+    # Forma padrão dos pontos: "circle", "square" ou "triangle". Cada ponto pode ter a sua própria
+    # (InterestPoint.shape). [parametros.py]
+    point_shape: str = P.PONTO_FORMA
+    # Forma dos pontos de intersecção conforme o nº de regiões que se encontram. [parametros.py]
+    point_shapes: Dict[int, str] = field(default_factory=lambda: dict(P.INTERSECCAO_FORMAS))
 
     def validate(self) -> None:
         if self.base_thickness_mm <= 0:
@@ -186,13 +194,15 @@ AJUDA: Dict[str, Dict[str, str]] = {
         "min_region_area_mm2": "Regiões menores (mm2) são absorvidas pela vizinha de cor mais próxima.",
         "ignore_color": "Cor RGB de fundo, ex.: [255, 255, 255]. A região dessa cor fica lisa. null = nenhuma.",
         "ignore_tolerance": "Quão próxima (delta E) uma região precisa ser de ignore_color para contar como fundo.",
-        "min_border_length_mm": "Fronteiras mais curtas que isso (mm) não ganham cordão.",
+        "min_region_thickness_mm": "Traços/regiões mais finos que isso (mm) são apagados e preenchidos pela vizinhança (contornos pretos, serrilhado). 0 = desligado.",
+        "min_border_length_mm": "Fronteira mais curta que isso (mm) é encolhida: as duas junções viram uma só, sem abrir fresta.",
         "smooth_sigma_mm": "Suavização das curvas (mm): tira o serrilhado dos pixels. Maior = mais redondo, cantos amaciados.",
         "simplify_tol_mm": "Simplificação Douglas-Peucker (mm). Maior = menos pontos na curva, perfil mais facetado.",
         "outer_frame": "true = cordão também em volta de toda a peça.",
-        "min_regions_at_point": "Nº mínimo de regiões que se encontram para marcar um ponto (3 = junção em Y).",
+        "junction_points": "true = marca cada encontro de 3+ regiões com um ponto (desligado por padrão).",
+        "min_regions_at_point": "Nº mínimo de regiões que se encontram para marcar um ponto de intersecção (3 = junção em Y).",
         "point_merge_dist_mm": "Junções mais próximas que isso (mm) viram um ponto só.",
-        "max_points": "Mantém só os N pontos de maior valência. null = todos.",
+        "max_points": "Mantém só os N pontos de intersecção de maior valência. null = todos.",
         "random_seed": "Semente do k-means: o mesmo valor repete o mesmo resultado.",
     },
     "output": {
@@ -206,7 +216,7 @@ AJUDA: Dict[str, Dict[str, str]] = {
         "texture_amplitude_mm": "Altura (mm) dos relevos de textura acima da base.",
         "ridge_profile": "Seção dos traços: 'triangular' (ponta arredondada) ou 'round'.",
         "apex_round_mm": "Raio (mm) do arredondamento da ponta triangular. 0 = ponta viva.",
-        "default_textures": "Ids de textura usados em ciclo nas regiões sem escolha manual (0 lisa, 1 linhas, 2 X, 3 ondas, 4 escamas, 5 losangos).",
+        "default_textures": "Texturas disponíveis para as regiões sem escolha manual. Vizinhas nunca repetem e, havendo textura livre, nenhuma se repete. 1 linhas, 2 X, 3 ondas, 4 escamas, 5 losangos.",
         "region_textures": "Escolha manual: {\"id_regiao\": id_textura} ou {\"id_regiao\": {\"texture\": 2, \"amplitude_mm\": 0.6, \"scale\": 1.5 (>1 amplia), \"stretch\": 2.0 e \"stretch_angle_deg\": 30 (alonga nessa direção), \"shear\": 0.0 (inclina), \"rotation_deg\": 0, \"offset_mm\": [0, 0], \"warp_amplitude_mm\": 0.0 e \"warp_wavelength_mm\": 20 (ondula)}}.",
         "texture_dir": "Pasta com texturas de CAD/PNG '<id>_<nome>.stl|png' (id >= 100). null = nenhuma.",
         "min_feature_warn_mm": "Avisa se o menor traço, após distorção, ficar menor que isso (mm).",
@@ -222,8 +232,8 @@ AJUDA: Dict[str, Dict[str, str]] = {
         "point_size_mm": "Diâmetro (círculo) ou lado (quadrado/triângulo), em mm.",
         "point_flank_mm": "Largura (mm) da rampa inclinada em volta da forma do ponto.",
         "point_exclusion_mm": "Raio (mm) sem textura a partir do CENTRO do ponto (cresce sozinho se a forma for maior).",
-        "point_shapes": "Forma por nº de regiões no ponto: {\"3\": \"triangle\", \"4\": \"square\"} (também 'circle').",
-        "default_point_shape": "Forma das valências não listadas em point_shapes.",
+        "point_shape": "Forma padrão dos pontos: circle, square ou triangle.",
+        "point_shapes": "Forma dos pontos de intersecção por nº de regiões: {\"3\": \"triangle\", \"4\": \"square\"}.",
     },
 }
 
@@ -277,6 +287,8 @@ def _dataclass_from_dict(klass, data: Dict[str, Any]):
     """Cria o dataclass ignorando notas ("_...") e rejeitando chaves desconhecidas;
     converte chaves '3' -> 3 onde faz sentido."""
     data = {k: v for k, v in data.items() if not k.startswith("_")}
+    if "default_point_shape" in data:                       # nome antigo de point_shape
+        data["point_shape"] = data.pop("default_point_shape")
     valid = {f.name for f in fields(klass)}
     unknown = set(data) - valid
     if unknown:

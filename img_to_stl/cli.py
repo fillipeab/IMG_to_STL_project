@@ -40,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--min-region-area", type=float, help="área mínima de região (mm²)")
     g.add_argument("--min-border", type=float, help="comprimento mínimo de fronteira (mm)")
     g.add_argument("--clusters", type=int, help="cores iniciais do k-means")
+    g.add_argument("--junction-points", action="store_true",
+                   help="liga os pontos de intersecção (encontros de 3+ regiões); desligado por padrão")
 
     g = p.add_argument_group("parte 2 — relevo")
     g.add_argument("--resolution", type=float, help="resolução da grade (mm); menor = mais detalhe")
@@ -87,6 +89,8 @@ def main(argv=None) -> int:
         build_parser().error("informe a imagem (ou use --export-textures PASTA)")
     cfg = PipelineConfig.from_json(args.config) if args.config else PipelineConfig()
     apply_overrides(cfg, args)
+    if args.junction_points:
+        cfg.vision.junction_points = True
     if args.no_negatives:
         cfg.output.negatives = False
     if args.save_config:

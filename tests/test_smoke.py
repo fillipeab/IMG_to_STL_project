@@ -45,7 +45,7 @@ def test_pipeline_end_to_end():
         pipe = ImageToReliefPipeline(cfg, verbose=False)
         pmap = pipe.read(img, out_dir=d)
         assert len(pmap.regions) == 7, "esperado: 6 células + 1 ilha (o ponto minúsculo deve sumir)"
-        assert len(pmap.points) == 4
+        assert len(pmap.points) == 0          # pontos de interesse ainda não são detectados
         assert any(b.outer for b in pmap.borders), "moldura externa deveria existir"
         stl = os.path.join(d, "peca.stl")
         mesh = pipe.run(img, stl)
@@ -82,6 +82,120 @@ def test_cad_roundtrip_stl_and_png():
             assert np.abs(stl.height(x, y) - ref).mean() < 0.02
             png = TileTexture.from_file(os.path.join(d, fname + ".png"))
             assert np.abs(png.height(x, y) - ref).mean() < 0.08
+
+def test_negativos_pastas_e_suavizacao():
+    """Saída em subpasta por imagem, negativos gerados e textura reduzida na zona de exclusão."""
+    import cv2
+    from img_to_stl.pipeline import resolve_outputs
+    import make_demo_image
+    with tempfile.TemporaryDirectory() as d:
+        img = os.path.join(d, "minha_imagem.png")
+        make_demo_image.make(img)
+        out_dir, stl = resolve_outputs(img, d)
+        assert out_dir == os.path.join(d, "minha_imagem") and stl.endswith("minha_imagem.stl")
+        cfg = PipelineConfig()
+        cfg.relief.resolution_mm = 0.4
+        pipe = ImageToReliefPipeline(cfg, verbose=False)
+        pipe.run(img, stl, out_dir)
+        neg = os.path.join(out_dir, "negativos")
+        for f in ("regioes.png", "fronteiras.png", "pontos.png", "composto.png"):
+            assert (cv2.imread(os.path.join(neg, f), cv2.IMREAD_UNCHANGED) is not None), f
+        pts = cv2.imread(os.path.join(neg, "pontos.png"), 0)
+        assert (pts > 0).sum() == 0            # sem pontos de interesse detectados, a máscara fica vazia
+        # suavização: com a textura reduzida a zona de exclusão deixa de ser lisa
+        pm = pipe.read(img)
+        zs = []
+        for sc in (0.0, 0.5):
+            c = PipelineConfig(); c.relief.resolution_mm = 0.2; c.relief.exclusion_texture_scale = sc
+            zs.append(ImageToReliefPipeline(c, verbose=False).build_heightfield(pm).z)
+        assert not np.allclose(zs[0], zs[1])
+        assert zs[1].max() <= zs[0].max() + 1e-6          # a reduzida nunca passa a textura normal
+
+
+def _dangling_ends(pmap):
+    import collections
+    cnt = collections.Counter()
+    for b in pmap.borders:
+        if not b.closed:
+            for q in (b.points_mm[0], b.points_mm[-1]):
+                cnt[(round(q[0], 3), round(q[1], 3))] += 1
+    return [k for k, v in cnt.items() if v == 1]
+
+
+def test_contornos_finos_e_fronteiras_continuas():
+    """Linhas pretas finas (como contornos de mapa) não viram regiões nem pontos falsos e a rede
+    de fronteiras não tem pontas soltas."""
+    from PIL import Image, ImageDraw
+    from img_to_stl.vision import ImageReader
+    import make_demo_image
+    with tempfile.TemporaryDirectory() as d:
+        base = os.path.join(d, "base.png")
+        make_demo_image.make(base)
+        ref = ImageReader(PipelineConfig().vision).read(base)
+        im = Image.open(base).convert("RGB")
+        dr = ImageDraw.Draw(im)
+        w, h = im.size
+        dr.line([(0, h // 2), (w, h // 2)], fill=(0, 0, 0), width=2)           # linha preta fina atravessando
+        dr.line([(w // 5, h // 5), (w // 5, h // 3)], fill=(20, 20, 20), width=2)   # traço solto (beco sem saída)
+        lined = os.path.join(d, "linhas.png")
+        im.save(lined)
+        pm = ImageReader(PipelineConfig().vision).read(lined)
+        assert len(pm.regions) <= len(ref.regions) + 1
+        assert _dangling_ends(pm) == []
+        assert pm.points == []
+
+
+def test_pontos_de_interesse_manuais():
+    """Os pontos de interesse (lista em PlanarMap.points) viram relevo e aparecem nos negativos."""
+    import cv2
+    from img_to_stl.vision import ImageReader, InterestPoint
+    from img_to_stl.negatives import NegativeRenderer
+    import make_demo_image
+    with tempfile.TemporaryDirectory() as d:
+        img = os.path.join(d, "x.png")
+        make_demo_image.make(img)
+        cfg = PipelineConfig()
+        cfg.relief.resolution_mm = 0.1
+        pm = ImageReader(cfg.vision).read(img)
+        base = ImageToReliefPipeline(cfg, verbose=False).build_heightfield(pm).z.copy()
+        pm.points = [InterestPoint(0, (30.0, 40.0), "triangle", "Capital A"), InterestPoint(1, (70.0, 20.0))]
+        hf = ImageToReliefPipeline(cfg, verbose=False).build_heightfield(pm)
+        assert hf.z.max() >= cfg.relief.base_thickness_mm + cfg.relief.point_height_mm - 1e-3
+        assert not np.allclose(base, hf.z)
+        NegativeRenderer(pm, cfg.relief, cfg.output).save(d)
+        assert (cv2.imread(os.path.join(d, "pontos.png"), 0) > 0).sum() > 0
+        assert pm.to_dict()["points"][0]["name"] == "Capital A"
+
+
+def test_texturas_vizinhas_distintas_e_pontos_de_intersecao_opcionais():
+    from img_to_stl.relief import TextureAssigner
+    from img_to_stl.vision import ImageReader
+    import make_demo_image
+    with tempfile.TemporaryDirectory() as d:
+        img = os.path.join(d, "x.png")
+        make_demo_image.make(img)
+        cfg = PipelineConfig()
+        pm = ImageReader(cfg.vision).read(img)
+        assert pm.points == []                                   # intersecções desligadas por padrão
+        adj = TextureAssigner.adjacency(pm)
+        asg = TextureAssigner(cfg.relief).assign(pm)
+        for a, vizinhas in adj.items():                          # vizinhas nunca repetem
+            for b in vizinhas:
+                assert asg[a].texture_id != asg[b].texture_id
+        # nenhuma repetição enquanto houver textura livre; com mais regiões que texturas, repete o mínimo
+        ids = [a.texture_id for a in asg.values()]
+        assert len(set(ids)) == min(len(ids), len(cfg.relief.default_textures))
+        # escolha manual pode repetir (mesmo entre vizinhas) sem ser alterada
+        viz = next((a, b) for a, v in adj.items() for b in v)
+        cfg.relief.region_textures = {viz[0]: 3, viz[1]: 3}
+        asg = TextureAssigner(cfg.relief).assign(pm)
+        assert asg[viz[0]].texture_id == asg[viz[1]].texture_id == 3
+        # pontos de intersecção (opcionais)
+        cfg.vision.junction_points = True
+        pm2 = ImageReader(cfg.vision).read(img)
+        assert len(pm2.points) == 4 and all(p.valence >= 3 for p in pm2.points)
+        # só nas junções: formas por valência
+        assert {p.valence for p in pm2.points} <= {3, 4}
 
 
 if __name__ == "__main__":

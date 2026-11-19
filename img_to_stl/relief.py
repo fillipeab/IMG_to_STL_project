@@ -9,6 +9,7 @@ Camadas combinadas por máximo, sobre uma placa de espessura `base_thickness_mm`
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
@@ -101,25 +102,83 @@ class TextureAssignment:
 
 
 class TextureAssigner:
-    """Decide a textura de cada região: manual (config) > fundo ignorado (lisa) > ciclo padrão."""
+    """Decide a textura de cada região.
+
+    Prioridade: escolha manual (config) > fundo ignorado (lisa) > automática.
+    Automática: regiões vizinhas NUNCA recebem a mesma textura e, enquanto houver textura
+    livre, nenhuma textura se repete na imagem. Só repete quando há mais regiões do que
+    texturas em `default_textures` (e, mesmo assim, nunca entre vizinhas, se for possível).
+    Repetições pedidas manualmente pela usuária são respeitadas sem aviso.
+    """
 
     def __init__(self, cfg: ReliefConfig):
         self.cfg = cfg
+        self.warnings: List[str] = []
+
+    @staticmethod
+    def adjacency(pmap: PlanarMap) -> Dict[int, set]:
+        """Regiões que se tocam (pixels vizinhos com rótulos diferentes)."""
+        lab = pmap.labels
+        pairs = set()
+        for a, b in ((lab[:, :-1], lab[:, 1:]), (lab[:-1, :], lab[1:, :])):
+            m = a != b
+            lo, hi = np.minimum(a[m], b[m]), np.maximum(a[m], b[m])
+            pairs.update(zip(lo.tolist(), hi.tolist()))
+        adj: Dict[int, set] = {r.id: set() for r in pmap.regions}
+        for x, y in pairs:
+            adj[x].add(y)
+            adj[y].add(x)
+        return adj
 
     def assign(self, pmap: PlanarMap) -> Dict[int, TextureAssignment]:
         cfg = self.cfg
-        cycle = cfg.default_textures or [0]
         out: Dict[int, TextureAssignment] = {}
-        k = 0
+        auto: List[int] = []
         for r in pmap.regions:
             if r.id in cfg.region_textures:
                 out[r.id] = self._parse(cfg.region_textures[r.id])
             elif r.ignored:
                 out[r.id] = TextureAssignment(0, amplitude_mm=cfg.texture_amplitude_mm)
             else:
-                out[r.id] = TextureAssignment(cycle[k % len(cycle)], amplitude_mm=cfg.texture_amplitude_mm)
-                k += 1
-        return out
+                auto.append(r.id)
+        if not auto:
+            return out
+
+        pool = [t for t in cfg.default_textures if t != 0] or [0]
+        adj = self.adjacency(pmap)
+        usage = Counter(a.texture_id for a in out.values() if a.texture_id != 0)
+        chosen: Dict[int, int] = {}
+        pending = set(auto)
+
+        def neighbour_textures(rid: int) -> set:
+            ts = {out[n].texture_id for n in adj[rid] if n in out}
+            ts |= {chosen[n] for n in adj[rid] if n in chosen}
+            ts.discard(0)
+            return ts
+
+        while pending:
+            # a mais "apertada" primeiro: mais texturas já usadas por vizinhas, depois mais vizinhas
+            rid = max(sorted(pending), key=lambda i: (len(neighbour_textures(i)), len(adj[i])))
+            forbidden = neighbour_textures(rid)
+            free = [t for t in pool if t not in forbidden]
+            if free:
+                tex = min(free, key=lambda t: (usage[t], pool.index(t)))
+            else:
+                tex = min(pool, key=lambda t: (sum(1 for n in adj[rid] if (chosen.get(n) or (out[n].texture_id if n in out else None)) == t),
+                                               usage[t], pool.index(t)))
+                self.warnings.append(
+                    f"região {rid}: todas as texturas de default_textures já são usadas por regiões vizinhas; "
+                    f"repetiu a textura {tex} (acrescente texturas em default_textures ou escolha à mão)")
+            chosen[rid] = tex
+            usage[tex] += 1
+            pending.discard(rid)
+        for rid, tex in chosen.items():
+            out[rid] = TextureAssignment(tex, amplitude_mm=cfg.texture_amplitude_mm)
+        if len(auto) > len(pool):
+            self.warnings.append(
+                f"{len(auto)} regiões e só {len(pool)} texturas em default_textures: algumas se repetem "
+                f"(nunca entre vizinhas, quando possível). Acrescente texturas para evitar repetições.")
+        return dict(sorted(out.items()))
 
     def _parse(self, spec) -> TextureAssignment:
         amp = self.cfg.texture_amplitude_mm
@@ -172,9 +231,10 @@ class ReliefBuilder:
         self.profile = RidgeProfile(config.ridge_profile, config.apex_round_mm)
         if config.texture_dir:
             TextureLibrary.load_directory(config.texture_dir)
-        self.assignments = TextureAssigner(config).assign(pmap)
+        assigner = TextureAssigner(config)
+        self.assignments = assigner.assign(pmap)
         self._texture_cache: Dict[int, Texture] = {}
-        self.warnings: List[str] = []
+        self.warnings: List[str] = list(assigner.warnings)
         self._region_textures: Dict[int, Texture] = {}
         self._reduced_textures: Dict[int, Texture] = {}   # versão em escala menor p/ a zona de exclusão
         for rid, asg in self.assignments.items():
@@ -297,7 +357,7 @@ class ReliefBuilder:
         factor = np.ones(X.shape, dtype=np.float32)
         ny, nx = X.shape
         for p in self.pmap.points:
-            shape = PointShapeFactory.create(cfg.point_shapes.get(p.valence, cfg.default_point_shape),
+            shape = PointShapeFactory.create(p.shape or cfg.point_shapes.get(p.valence, cfg.point_shape),
                                              cfg.point_size_mm)
             excl = max(cfg.point_exclusion_mm, shape.extent + cfg.point_flank_mm)
             reach = excl + fade

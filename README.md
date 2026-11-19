@@ -1,6 +1,6 @@
 # img_to_stl
 
-Imagem → **regiões, fronteiras e pontos** → relevo 2.5D texturizado → **STL** para impressão 3D.
+Imagem → **regiões, fronteiras** (e **pontos**: de interesse, no futuro, e de intersecção, opcionais) → relevo 2.5D texturizado → **STL** para impressão 3D.
 
 ## Instalação
 ```
@@ -27,7 +27,7 @@ saida/imagem/
   negativos/               preto e branco, mesma escala e enquadramento do relevo
     regioes.png            um tom de cinza por região (fora da peça = preto)
     fronteiras.png         cordões em branco
-    pontos.png             pontos (círculo/quadrado/triângulo) em branco
+    pontos.png             pontos em branco (vazio por padrão: sem pontos de interesse nem de intersecção)
     composto.png           os três juntos (pontos em vermelho)
     regioes/regiao_NN.png  máscara de cada região
 ```
@@ -35,6 +35,7 @@ saida/imagem/
 `--no-negatives` não grava `negativos/`.
 
 ## Texturas (ids)
+Regiões sem textura escolhida recebem uma automaticamente: **vizinhas nunca ficam com a mesma** e, sempre que possível, **nenhuma textura se repete** na imagem. Escolhas manuais (`--textures`, `region_textures`) valem como estão, mesmo repetidas.
 `0` lisa · `1` linhas diagonais · `2` X's (grandes + mini) · `3` ondas · `4` escamas · `5` losangos (pirâmides).
 Todas periódicas em tile de 10 mm, em coordenadas globais (contínuas entre regiões).
 Parâmetros por textura em `relief.texture_params`, ex.: `{"2": {"mini_ratio": 0.625, "corner_height": 0.3}}`.
@@ -80,7 +81,7 @@ textura, inclusive as de CAD). Por região, em `relief.region_textures`:
 | Arquivo | Classes principais |
 |---|---|
 | `config.py` | `VisionConfig`, `ReliefConfig`, `PipelineConfig` (JSON) |
-| `vision.py` | `ImageReader`, `RegionGraph`, `BorderTracer`, `PlanarMap`, `Region`, `Border`, `JunctionPoint` |
+| `vision.py` | `ImageReader`, `RegionGraph`, `BorderTracer`, `PlanarMap`, `Region`, `Border`, `InterestPoint` |
 | `textures.py` | `Texture` (base), `FlatTexture`, `DiagonalLinesTexture`, `XPatternTexture`, `WavesTexture`, `ScalesTexture`, `RidgeProfile`, `TextureLibrary` |
 | `parametros.py` | parâmetros principais editáveis (fronteira, pontos, exclusões...) |
 | `negatives.py` | `NegativeRenderer` (negativos: regiões, fronteiras, pontos) |
@@ -126,7 +127,8 @@ Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não 
 ### Fronteiras
 | Parâmetro | Padrão | O que faz |
 |---|---|---|
-| `min_border_length_mm` | 4 | Fronteiras mais curtas não ganham cordão. |
+| `min_region_thickness_mm` | 1,0 | Traços/regiões mais finos que isso são apagados e preenchidos pela vizinhança: some o contorno preto de mapas, o serrilhado entre cores e texto fino; a fronteira passa pelo meio do traço. 0 = desligado. |
+| `min_border_length_mm` | 4 | Fronteira mais curta é **encolhida**: as duas junções viram uma só (não é apagada, para a rede de cordões não abrir fresta). |
 | `smooth_sigma_mm` | 0,5 | Suavização das curvas (tira o serrilhado). Maior = mais redondo, cantos amaciados. |
 | `simplify_tol_mm` | 0,12 | Simplificação Douglas-Peucker. Maior = menos pontos na curva, perfil mais facetado. |
 | `outer_frame` | `True` | Cordão também em volta de toda a peça. |
@@ -138,18 +140,27 @@ Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não 
 | `exclusion_texture_scale` | 0,5 | **Suavização:** na zona de exclusão (cordões e pontos) entra uma versão da textura reduzida a esta escala, em vez de deixá-la lisa. 0 = desligado. Traços ficam mais finos (avisa se < `min_feature_warn_mm`). |
 | `exclusion_texture_height_factor` | 0,6 | Altura da textura reduzida em relação à normal (0,6 = 60%). |
 
-### Pontos (encontros de 3+ regiões)
+### Pontos
+**Pontos de interesse** — marcas pontuais (capitais etc.). **A detecção ainda não existe**: hoje a lista de pontos sai vazia. O
+relevo e os negativos já sabem modelá-los; para testar, preencha `pmap.points` em Python
+(`InterestPoint(id, (x_mm, y_mm), shape, name)`; mm, y para cima, origem no canto inferior esquerdo).
 | Parâmetro | Padrão | O que faz |
 |---|---|---|
-| `min_regions_at_point` | 3 | Nº mínimo de regiões que se encontram para marcar um ponto. |
-| `point_merge_dist_mm` | 1,5 | Junções mais próximas que isso viram um ponto só. |
-| `max_points` | `None` | Mantém só os N pontos de maior valência (`None` = todos). |
-| `point_shapes` | `{3: triangle, 4: square}` | Forma por nº de regiões no ponto (`circle`, `square`, `triangle`). |
-| `default_point_shape` | `circle` | Forma das valências não listadas acima. |
+| `point_shape` | `circle` | Forma padrão: `circle`, `square` ou `triangle` (cada ponto pode ter a sua). |
 | `point_size_mm` | 1,2 | Diâmetro (círculo) ou lado (quadrado/triângulo). |
 | `point_height_mm` | 1,4 | Altura do ponto acima da base. |
 | `point_flank_mm` | 0,4 | Largura da rampa inclinada em volta da forma. |
 | `point_exclusion_mm` | 1,0 | Raio sem textura a partir do **centro** (cresce sozinho se a forma for maior). |
+
+**Pontos de intersecção** (opcionais, **desligados** por padrão) — um ponto em cada encontro de 3 ou mais regiões:
+| Parâmetro | Padrão | O que faz |
+|---|---|---|
+| `junction_points` | `false` | `true` liga os pontos de intersecção. |
+| `min_regions_at_point` | 3 | Nº mínimo de regiões que se encontram para marcar o ponto. |
+| `point_merge_dist_mm` | 1,5 | Junções mais próximas que isso viram um ponto só. |
+| `max_points` | `None` | Mantém só os N pontos de maior valência (`None` = todos). |
+| `point_shapes` | `{3: triangle, 4: square}` | Forma pelo nº de regiões no ponto (`circle`, `square`, `triangle`); os demais usam `point_shape`. |
+Para ligar: `--junction-points` na linha de comando ou `"junction_points": true` no JSON.
 
 ### Texturas
 | Parâmetro | Padrão | O que faz |
@@ -157,7 +168,7 @@ Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não 
 | `texture_amplitude_mm` | 0,6 | Altura dos relevos de textura acima da base. |
 | `ridge_profile` | `triangular` | Seção dos traços: `triangular` (ponta arredondada) ou `round`. |
 | `apex_round_mm` | 0,1 | Raio do arredondamento da ponta triangular (0 = ponta viva). |
-| `default_textures` | `[1,2,3,4]` | Texturas usadas em ciclo nas regiões sem escolha manual. |
+| `default_textures` | `[1,2,3,4,5]` | Texturas disponíveis para as regiões sem escolha manual. **Vizinhas nunca repetem a textura** e, havendo textura livre, nenhuma se repete na imagem; só repete se houver mais regiões que texturas (e, ainda assim, não entre vizinhas, se possível — o programa avisa). Escolhas manuais podem repetir. |
 | `region_textures` | `{}` | Escolha manual: `{id_região: id_textura}` ou dict com distorção (veja abaixo). |
 | `texture_dir` | `None` | Pasta com texturas de CAD/PNG (`<id>_<nome>.stl|png`, id ≥ 100). |
 | `texture_params` | `{}` | Parâmetros próprios por textura (tabela abaixo). |
@@ -184,6 +195,8 @@ Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não 
 | `warp_amplitude_mm`, `warp_wavelength_mm` | Ondulam o padrão ("tortinho"): quanto desloca e a cada quantos mm. |
 
 - Fronteiras são traçadas entre pixels: regiões vizinhas **compartilham exatamente a mesma curva**.
+- A rede de fronteiras é **contínua**: toda fronteira termina numa junção (ou é um laço fechado); não há pontas soltas nem frestas. Encontros de regiões só geram pontos se `junction_points` estiver ligado (padrão: desligado).
+- Imagens com **contornos pretos** (mapas): o filtro `min_region_thickness_mm` remove as linhas finas antes de separar as regiões. Regiões de uma mesma cor separadas por linhas (ex.: estados) viram uma só.
 
 ### Saídas (`output`)
 | Parâmetro | Padrão | O que faz |

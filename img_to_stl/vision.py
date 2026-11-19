@@ -7,7 +7,8 @@ Fluxo (classe `ImageReader`):
      em `max_regions` (sempre fundindo as mais parecidas)
   4. fronteiras: traçadas nas "frestas" entre pixels (topologia exata: regiões vizinhas dividem a
      MESMA curva), suavizadas e simplificadas
-  5. pontos: junções onde 3+ regiões se encontram
+  5. pontos: de interesse (capitais etc.: ainda sem detecção; entram pela lista `PlanarMap.points`)
+     e, opcionalmente (junction_points), de intersecção, onde 3+ regiões se encontram
 
 Coordenadas do resultado: mm, x para a direita, y para cima, origem no canto inferior esquerdo.
 """
@@ -56,13 +57,19 @@ class Border:
 
 
 @dataclass
-class JunctionPoint:
+class InterestPoint:
+    """Ponto de interesse marcado no mapa (ex.: capital). Ainda não é detectado na imagem:
+    quem monta o `PlanarMap` preenche `points` (coordenadas em mm, y para cima, origem no canto
+    inferior esquerdo, como em mapa.json)."""
     id: int
     xy_mm: Tuple[float, float]
-    regions: Tuple[int, ...]
+    shape: Optional[str] = None   # "circle", "square" ou "triangle"; None = forma padrão da configuração
+    name: Optional[str] = None
+    regions: Tuple[int, ...] = ()  # só nos pontos de intersecção: regiões que se encontram ali
 
     @property
     def valence(self) -> int:
+        """Nº de regiões que se encontram (0 para pontos de interesse comuns)."""
         return len(self.regions)
 
 
@@ -74,7 +81,7 @@ class PlanarMap:
     mm_per_px: float
     regions: List[Region] = field(default_factory=list)
     borders: List[Border] = field(default_factory=list)
-    points: List[JunctionPoint] = field(default_factory=list)
+    points: List[InterestPoint] = field(default_factory=list)   # pontos de interesse (ver InterestPoint)
     outer_frame: bool = True
 
     @property
@@ -111,7 +118,7 @@ class PlanarMap:
             ],
             "borders": [],
             "points": [{"id": p.id, "xy_mm": [round(c, 3) for c in p.xy_mm],
-                        "regions": list(p.regions), "valence": p.valence} for p in self.points],
+                        "shape": p.shape, "name": p.name, "regions": list(p.regions)} for p in self.points],
         }
         for b in self.borders:
             item = {"id": b.id, "regions": [b.region_a, b.region_b], "length_mm": round(b.length_mm, 2),
@@ -278,7 +285,7 @@ class BorderTracer:
     """Extrai fronteiras como cadeias de "frestas" entre pixels.
 
     Cada fresta separa dois pixels de rótulos diferentes; os vértices são cantos de pixel.
-    Vértices de grau 2 pertencem ao meio de uma cadeia; grau 3+ são junções (pontos).
+    Vértices de grau 2 pertencem ao meio de uma cadeia; grau 3+ são junções da rede de fronteiras.
     Como duas regiões vizinhas usam a mesma cadeia, não há frestas nem sobreposições.
     """
 
@@ -287,8 +294,8 @@ class BorderTracer:
         self.sigma = smooth_sigma_px
         self.tol = simplify_tol_px
 
-    def trace(self) -> Tuple[List[Chain], np.ndarray, List[Tuple[int, ...]]]:
-        """Retorna (cadeias, junções xy em px, regiões de cada junção)."""
+    def trace(self) -> List[Chain]:
+        """Retorna as cadeias de fronteira (entre vértices de grau != 2)."""
         P = np.pad(self.labels, 1, constant_values=-1)
         Hp, Wp = P.shape
         Wv = Wp + 1
@@ -307,7 +314,7 @@ class BorderTracer:
         n_edges = len(u)
         n_vert = (Hp + 1) * Wv
         if n_edges == 0:
-            return [], np.zeros((0, 2)), []
+            return []
 
         ends = np.concatenate([u, v])
         eids = np.concatenate([np.arange(n_edges), np.arange(n_edges)])
@@ -316,17 +323,6 @@ class BorderTracer:
         deg = np.bincount(ends, minlength=n_vert)
         ptr = np.zeros(n_vert + 1, dtype=np.int64)
         ptr[1:] = np.cumsum(deg)
-
-        # --- junções (pontos) ---
-        jv = np.nonzero(deg >= 3)[0]
-        jr, jc = np.clip(jv // Wv, 1, Hp - 1), np.clip(jv % Wv, 1, Wp - 1)
-        four = np.stack([P[jr - 1, jc - 1], P[jr - 1, jc], P[jr, jc - 1], P[jr, jc]], axis=1)
-        four = np.sort(four, axis=1)
-        distinct = 1 + (np.diff(four, axis=1) != 0).sum(axis=1)
-        real = distinct - (four[:, 0] == -1)
-        keep = real >= 2
-        junc_xy = np.stack([(jv % Wv) - 1, (jv // Wv) - 1], axis=1).astype(float)[keep]
-        junc_regions = [tuple(sorted(set(int(x) for x in row if x >= 0))) for row in four[keep]]
 
         # --- cadeias ---
         ul, vl, lol, hil = u.tolist(), v.tolist(), lo.tolist(), hi.tolist()
@@ -351,7 +347,9 @@ class BorderTracer:
                 cur = nxt
             arr = np.asarray(ids)
             pts = np.stack([(arr % Wv) - 1, (arr // Wv) - 1], axis=1).astype(float)
-            closed = ids[0] == ids[-1]
+            # laço que começa numa junção (grau >= 3) NÃO é um laço livre: as pontas precisam ficar
+            # fixas na junção, senão a suavização abre uma fresta no cordão
+            closed = ids[0] == ids[-1] and degl[start] == 2
             chains.append(self._refine(Chain(lol[first], hil[first], pts, closed)))
 
         for x in np.nonzero((deg != 2) & (deg > 0))[0].tolist():
@@ -361,7 +359,7 @@ class BorderTracer:
         for e in range(n_edges):          # laços fechados sem junção (ilhas)
             if not visited[e]:
                 walk(ul[e], e)
-        return chains, junc_xy, junc_regions
+        return chains
 
     def _refine(self, ch: Chain) -> Chain:
         """Suaviza (remove a 'escada') mantendo as pontas fixas e simplifica (Douglas-Peucker)."""
@@ -405,6 +403,7 @@ class ImageReader:
         lab = cv2.cvtColor(rgb.astype(np.float32) / 255.0, cv2.COLOR_RGB2Lab)
 
         labels = self._initial_segmentation(lab)
+        labels = self._remove_thin(labels, mm_per_px)
         labels = self._merge_regions(labels, lab, mm_per_px)
         pmap = PlanarMap(labels=labels, mm_per_px=mm_per_px, outer_frame=self.cfg.outer_frame)
         pmap.regions = self._build_regions(labels, rgb, lab, mm_per_px)
@@ -449,6 +448,31 @@ class ImageReader:
                 labels[cc > 0] = cc[cc > 0] + offset - 1 + 0
                 offset += n
         return labels
+
+    # ---- 2b. estruturas finas (contornos pretos, serrilhado, texto) ---- #
+    def _remove_thin(self, labels: np.ndarray, mm_per_px: float) -> np.ndarray:
+        """Apaga componentes mais finos que `min_region_thickness_mm` e preenche o espaço com o
+        rótulo vizinho mais próximo. Traços de contorno (ex.: linhas pretas de um mapa) e o
+        serrilhado entre duas cores deixam de virar "regiões" próprias; a fronteira passa pelo
+        meio do traço e fica contínua."""
+        t_mm = self.cfg.min_region_thickness_mm
+        if t_mm <= 0:
+            return labels
+        p = np.pad(labels, 1, mode="edge")
+        c = p[1:-1, 1:-1]
+        boundary = (c != p[:-2, 1:-1]) | (c != p[2:, 1:-1]) | (c != p[1:-1, :-2]) | (c != p[1:-1, 2:])
+        dt = cv2.distanceTransform((~boundary).astype(np.uint8), cv2.DIST_L2, 3)
+        n = int(labels.max()) + 1
+        max_dt = np.asarray(ndimage.maximum(dt, labels, index=np.arange(n)), dtype=float)
+        thickness_mm = (2.0 * max_dt + 1.0) * mm_per_px
+        thin = thickness_mm < t_mm
+        if not thin.any() or thin.all():
+            return labels
+        thin_px = thin[labels]
+        idx = ndimage.distance_transform_edt(thin_px, return_distances=False, return_indices=True)
+        out = labels[idx[0], idx[1]]
+        _, inv = np.unique(out, return_inverse=True)           # ids contínuos 0..n-1
+        return inv.reshape(out.shape).astype(np.int32)
 
     # ---- 3. fusão ---- #
     def _merge_regions(self, labels: np.ndarray, lab: np.ndarray, mm_per_px: float) -> np.ndarray:
@@ -497,7 +521,8 @@ class ImageReader:
         cfg, mpp = self.cfg, pmap.mm_per_px
         h = pmap.labels.shape[0]
         tracer = BorderTracer(pmap.labels, cfg.smooth_sigma_mm / mpp, cfg.simplify_tol_mm / mpp)
-        chains, junc_xy, junc_regions = tracer.trace()
+        chains = tracer.trace()
+        chains = self._contract_short(chains, mpp)
 
         def to_mm(p):
             return np.stack([p[:, 0] * mpp, (h - p[:, 1]) * mpp], axis=1)
@@ -506,21 +531,90 @@ class ImageReader:
             outer = ch.label_a == -1
             if outer and not cfg.outer_frame:
                 continue
-            border = Border(id=len(pmap.borders), region_a=ch.label_a, region_b=ch.label_b,
-                            points_mm=to_mm(ch.pts_px), closed=ch.closed, outer=outer)
-            if not outer and border.length_mm < cfg.min_border_length_mm:
+            pmap.borders.append(Border(id=len(pmap.borders), region_a=ch.label_a, region_b=ch.label_b,
+                                       points_mm=to_mm(ch.pts_px), closed=ch.closed, outer=outer))
+        if cfg.junction_points:
+            pmap.points = self._build_points(chains, to_mm)
+
+    def _contract_short(self, chains: List[Chain], mpp: float) -> List[Chain]:
+        """Garante fronteiras contínuas. Uma fronteira curta entre duas junções NÃO é apagada (abriria
+        uma fresta na rede): ela é "encolhida" — as duas junções viram uma só, no meio, e as demais
+        fronteiras passam a terminar ali. Só somem laços livres curtos (ilhotas) e laços curtos presos
+        a uma única junção."""
+        min_px = self.cfg.min_border_length_mm / mpp
+        if min_px <= 0:
+            return chains
+
+        def length(c: Chain) -> float:
+            d = np.diff(c.pts_px, axis=0)
+            return float(np.hypot(d[:, 0], d[:, 1]).sum())
+
+        def key(p) -> Tuple[int, int]:
+            return int(round(p[0])), int(round(p[1]))
+
+        parent: Dict[Tuple[int, int], Tuple[int, int]] = {}
+        members: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
+
+        def find(a):
+            parent.setdefault(a, a)
+            members.setdefault(a, [a])
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        def extent(vs) -> float:
+            xy = np.array(vs, dtype=float)
+            return float(np.hypot(*(xy.max(axis=0) - xy.min(axis=0))))
+
+        drop = set()
+        short = sorted((i for i, c in enumerate(chains) if c.label_a != -1 and length(c) < min_px),
+                       key=lambda i: length(chains[i]))
+        for i in short:
+            c = chains[i]
+            if c.closed or key(c.pts_px[0]) == key(c.pts_px[-1]):
+                drop.add(i)                                   # ilhota / laço curto preso a uma junção
                 continue
-            pmap.borders.append(border)
+            ra, rb = find(key(c.pts_px[0])), find(key(c.pts_px[-1]))
+            if ra == rb:
+                drop.add(i)
+                continue
+            if extent(members[ra] + members[rb]) <= min_px:   # evita colapsar uma curva longa
+                parent[rb] = ra
+                members[ra] += members.pop(rb)
+                drop.add(i)
 
-        pmap.points = self._build_points(junc_xy, junc_regions, to_mm)
+        centre = {r: np.mean(np.array(v, dtype=float), axis=0) for r, v in members.items() if len(v) > 1}
+        out = []
+        for i, c in enumerate(chains):
+            if i in drop:
+                continue
+            if not c.closed:
+                pts = c.pts_px.copy()
+                for end in (0, -1):
+                    r = find(key(pts[end])) if key(pts[end]) in parent else None
+                    if r is not None and r in centre:
+                        pts[end] = centre[r]
+                c = Chain(c.label_a, c.label_b, pts, c.closed)
+            out.append(c)
+        return out
 
-    def _build_points(self, junc_xy, junc_regions, to_mm) -> List[JunctionPoint]:
+    def _build_points(self, chains: List[Chain], to_mm) -> List[InterestPoint]:
+        """Pontos de intersecção = vértices da rede de fronteiras onde se encontram
+        >= min_regions_at_point regiões (a moldura externa não conta como região)."""
         cfg = self.cfg
-        cand = [i for i, r in enumerate(junc_regions) if len(r) >= cfg.min_regions_at_point]
+        verts: Dict[Tuple[float, float], set] = {}
+        for c in chains:
+            if c.closed:
+                continue
+            for end in (0, -1):
+                k = (round(float(c.pts_px[end][0]), 3), round(float(c.pts_px[end][1]), 3))
+                verts.setdefault(k, set()).update(r for r in (c.label_a, c.label_b) if r >= 0)
+        cand = [(k, r) for k, r in verts.items() if len(r) >= cfg.min_regions_at_point]
         if not cand:
             return []
-        xy = to_mm(junc_xy[cand])
-        regs = [junc_regions[i] for i in cand]
+        xy = to_mm(np.array([k for k, _ in cand], dtype=float))
+        regs = [tuple(sorted(r)) for _, r in cand]
 
         # agrupa junções muito próximas (ex.: 4 regiões que se encontram quase no mesmo lugar)
         parent = list(range(len(xy)))
@@ -545,4 +639,4 @@ class ImageReader:
         points.sort(key=lambda t: (-t[0], t[2], t[1]))
         if cfg.max_points is not None:
             points = points[: cfg.max_points]
-        return [JunctionPoint(id=i, xy_mm=(p[1], p[2]), regions=p[3]) for i, p in enumerate(points)]
+        return [InterestPoint(id=i, xy_mm=(p[1], p[2]), regions=p[3]) for i, p in enumerate(points)]

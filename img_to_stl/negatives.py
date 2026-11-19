@@ -68,7 +68,7 @@ class NegativeRenderer:
         img = np.zeros((self.ny, self.nx), np.uint8)
         cfg = self.relief
         for pt in self.pmap.points:
-            shape = PointShapeFactory.create(cfg.point_shapes.get(pt.valence, cfg.default_point_shape),
+            shape = PointShapeFactory.create(pt.shape or cfg.point_shapes.get(pt.valence, cfg.point_shape),
                                              cfg.point_size_mm)
             r = shape.extent + 1.0 / self.ppm
             cx, cy = self._px(pt.xy_mm)[0]

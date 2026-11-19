@@ -22,7 +22,12 @@ MAX_REGIOES = 12
 TOLERANCIA_COR = 10.0
 # Regiões menores que isso (mm²) são absorvidas pela vizinha de cor mais próxima (limpa "sujeira").
 AREA_MIN_REGIAO_MM2 = 15.0
-# Fronteiras mais curtas que isso (mm) não ganham cordão.
+# Traços e regiões mais finos que isso (mm) são apagados e preenchidos pela vizinhança: some o
+# contorno preto de mapas, o serrilhado entre cores e texto fino; a fronteira passa pelo meio do traço.
+# 0 = desligado. Aumente se ainda sobrarem "regiões" que são só linhas.
+ESPESSURA_MIN_REGIAO_MM = 1.0
+# Fronteira mais curta que isso (mm) é encolhida: as duas junções viram uma só (a rede de cordões
+# continua sem fresta). Não apaga fronteiras, para não deixar buracos.
 COMPRIMENTO_MIN_FRONTEIRA_MM = 4.0
 # Suavização das curvas (mm): tira o serrilhado dos pixels. Maior = mais redondo, cantos amaciados.
 SUAVIZACAO_CURVAS_MM = 0.5
@@ -34,9 +39,11 @@ MOLDURA_EXTERNA = True
 AMPLITUDE_TEXTURA_MM = 0.6
 # Raio de arredondamento da ponta dos traços triangulares. 0 = ponta viva.
 RAIO_APICE_MM = 0.1
-# Texturas usadas em ciclo nas regiões sem escolha manual (0 lisa, 1 linhas, 2 X, 3 ondas,
-# 4 escamas, 5 losangos). Ex.: [1, 3] alterna só linhas e ondas.
-TEXTURAS_PADRAO = [1, 2, 3, 4]
+# Texturas que o programa pode usar nas regiões sem escolha manual (0 lisa, 1 linhas, 2 X, 3 ondas,
+# 4 escamas, 5 losangos). Regiões vizinhas NUNCA repetem a textura e, enquanto houver textura livre,
+# nenhuma se repete na imagem. Só se repetem se houver mais regiões do que texturas (aí, nunca entre
+# vizinhas, quando possível). Escolhas manuais (--textures / region_textures) podem repetir.
+TEXTURAS_PADRAO = [1, 2, 3, 4, 5]
 # Aviso se o menor traço (após distorção) ficar menor que isso. Bico de 0,4 mm não imprime abaixo.
 AVISO_TRACO_MIN_MM = 0.4
 
@@ -64,7 +71,9 @@ EXCLUSAO_ESCALA_TEXTURA = 0.5
 # finos ficam mais frágeis/íngremes se mantiverem a altura cheia.
 EXCLUSAO_ALTURA_FATOR = 0.6
 
-# ======================= PONTOS (junções) ======================= #
+# ======================= PONTOS DE INTERESSE ======================= #
+# Marcas pontuais no mapa (capitais etc.). Ainda NÃO são detectadas na imagem: estes valores só
+# definem como cada ponto será modelado quando ele existir.
 # Altura do ponto acima da base.
 PONTO_ALTURA_MM = 1.4
 # Diâmetro (círculo) ou lado (quadrado/triângulo).
@@ -73,12 +82,20 @@ PONTO_TAMANHO_MM = 1.2
 PONTO_FLANCO_MM = 0.4
 # Raio sem textura em volta do CENTRO do ponto. Aumenta sozinho se a forma for maior que isso.
 PONTO_EXCLUSAO_MM = 1.0
-# Forma conforme o nº de regiões que se encontram no ponto: "circle", "square" ou "triangle".
-PONTO_FORMAS = {3: "triangle", 4: "square"}
-# Forma para as demais valências (5, 6...).
-PONTO_FORMA_PADRAO = "circle"
-# Junções mais próximas que isso viram um único ponto.
-PONTO_DIST_FUSAO_MM = 1.5
+# Forma padrão: "circle", "square" ou "triangle" (cada ponto pode ter a sua).
+PONTO_FORMA = "circle"
+
+# ---- Pontos de INTERSECÇÃO (opcional, desligado) ---- #
+# Marca com um ponto cada encontro de 3 ou mais regiões. Desligado por padrão; pode servir no futuro.
+PONTOS_DE_INTERSECCAO = False
+# Nº mínimo de regiões que se encontram para marcar um ponto (3 = junção em "Y").
+INTERSECCAO_MIN_REGIOES = 3
+# Junções mais próximas que isso (mm) viram um ponto só.
+INTERSECCAO_DIST_FUSAO_MM = 1.5
+# Se definido, mantém só os N pontos de intersecção de maior valência (None = todos).
+INTERSECCAO_MAX_PONTOS = None
+# Forma pelo nº de regiões que se encontram (usada nos pontos de intersecção).
+INTERSECCAO_FORMAS = {3: "triangle", 4: "square"}
 
 # ======================= SAÍDA ======================= #
 # Pasta-base das saídas. Cada imagem ganha uma subpasta própria: saida/<nome_da_imagem>/
