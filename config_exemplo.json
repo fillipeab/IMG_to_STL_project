@@ -54,6 +54,8 @@
     "border_semicircle": false,
     "border_exclusion_mm": 1.0,
     "exclusion_fade_mm": 0.3,
+    "exclusion_texture_scale": 0.5,
+    "exclusion_texture_height_factor": 0.6,
     "point_height_mm": 1.4,
     "point_size_mm": 1.2,
     "point_flank_mm": 0.4,
@@ -63,5 +65,10 @@
       "4": "square"
     },
     "default_point_shape": "circle"
+  },
+  "output": {
+    "base_dir": "saida",
+    "negatives": true,
+    "negatives_px_per_mm": 10.0
   }
 }

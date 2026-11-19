@@ -1,4 +1,4 @@
-# img_to_stl_project
+# img_to_stl
 
 Imagem → **regiões, fronteiras e pontos** → relevo 2.5D texturizado → **STL** para impressão 3D.
 
@@ -9,25 +9,30 @@ pip install -r requirements.txt     # numpy, scipy, opencv-python, Pillow
 
 ## Uso (2 passos)
 ```
-# 1) lê a imagem e gera saida/regioes_preview.png (com o id de cada região) e saida/mapa.json
-python -m img2stl imagem.png --read-only -o saida --width-mm 120 --max-regions 8 --tolerance 12
+# 1) lê a imagem e gera saida/imagem/regioes_preview.png (com o id de cada região), mapa.json e negativos/
+python -m img_to_stl imagem.png --read-only --width-mm 120 --max-regions 8 --tolerance 12
 
-# 2) escolhe as texturas por região e gera o STL
-python -m img2stl imagem.png -o saida/peca.stl --width-mm 120 --max-regions 8 --tolerance 12 \
-       --textures 0=1,1=2,2=3,3=4
+# 2) escolhe as texturas por região e gera o STL em saida/imagem/imagem.stl
+python -m img_to_stl imagem.png --width-mm 120 --max-regions 8 --tolerance 12 --textures 0=1,1=2,2=3,3=4
 ```
-Sem `--textures`, as regiões recebem as texturas 1→2→3→4 em ciclo. Para controle total (rotação,
-deslocamento, amplitude por região, parâmetros das texturas), use um JSON:
-`--config config.json` (veja `config_exemplo.json`; `--save-config` grava a configuração usada).
+Ou só `python run.py`, que pergunta o endereço da imagem.
 
-Pelo Python:
-```python
-from img2stl import PipelineConfig, ImageToReliefPipeline
-cfg = PipelineConfig()
-cfg.vision.width_mm = 120
-cfg.relief.region_textures = {0: 1, 1: {"texture": 2, "rotation_deg": 15}}
-ImageToReliefPipeline(cfg).run("imagem.png", "saida/peca.stl")
+**Saídas:** cada imagem ganha a própria pasta `saida/<nome_da_imagem>/`:
 ```
+saida/imagem/
+  imagem.stl               relevo para imprimir
+  regioes_preview.png      regiões coloridas com o id de cada uma (use nos --textures)
+  relevo_preview.png       prévia sombreada do relevo
+  mapa.json                regiões, fronteiras e pontos (com a geometria)
+  negativos/               preto e branco, mesma escala e enquadramento do relevo
+    regioes.png            um tom de cinza por região (fora da peça = preto)
+    fronteiras.png         cordões em branco
+    pontos.png             pontos (círculo/quadrado/triângulo) em branco
+    composto.png           os três juntos (pontos em vermelho)
+    regioes/regiao_NN.png  máscara de cada região
+```
+`-o PASTA` muda a pasta-base (padrão `saida`); `-o x.stl` usa esse caminho exato para o STL.
+`--no-negatives` não grava `negativos/`.
 
 ## Texturas (ids)
 `0` lisa · `1` linhas diagonais · `2` X's (grandes + mini) · `3` ondas · `4` escamas · `5` losangos (pirâmides).
@@ -36,12 +41,12 @@ Parâmetros por textura em `relief.texture_params`, ex.: `{"2": {"mini_ratio": 0
 
 ## Parâmetros: onde mudar
 Três níveis, do mais simples ao mais pontual (o de baixo vence o de cima):
-1. **`img2stl/parametros.py`** — padrões principais, comentados um a um. Edite e rode de novo.
+1. **`img_to_stl/parametros.py`** — padrões principais, comentados um a um. Edite e rode de novo.
 2. **`--config arquivo.json`** — um conjunto de valores por projeto. `config_exemplo.json` mostra o formato; o significado de cada parâmetro está no **Anexo** no fim deste arquivo.
 3. **Linha de comando** — `--width-mm`, `--max-regions`, `--tolerance`, `--resolution`, etc., só naquela execução.
 
 Parâmetros avançados (filtro de ruído, k-means, perfil dos traços, textura por região) ficam em
-`img2stl/config.py`, também comentados.
+`img_to_stl/config.py`, também comentados.
 
 ## Distorção de texturas (`transforms.py`)
 Camada intermediária que transforma as coordenadas antes de avaliar a textura (vale para qualquer
@@ -59,7 +64,7 @@ textura, inclusive as de CAD). Por região, em `relief.region_textures`:
   menor que `min_feature_warn_mm` (0,4 mm).
 
 ## Texturas no CAD (FreeCAD ↔ Python)
-- **Exportar modelos:** `python -m img2stl --export-textures texturas_modelo` grava, para cada textura
+- **Exportar modelos:** `python -m img_to_stl --export-textures texturas_modelo` grava, para cada textura
   interna, um tile 10×10 mm em STL (sólido fechado), PNG e JSON — já incluídos em `texturas_modelo/`.
 - **Editar:** abra o STL no FreeCAD (como referência) e modele o seu tile, ou pinte o PNG em
   GIMP/Krita (preto = baixo, branco = alto; use "tornar contínuo/seamless").
@@ -78,6 +83,7 @@ textura, inclusive as de CAD). Por região, em `relief.region_textures`:
 | `vision.py` | `ImageReader`, `RegionGraph`, `BorderTracer`, `PlanarMap`, `Region`, `Border`, `JunctionPoint` |
 | `textures.py` | `Texture` (base), `FlatTexture`, `DiagonalLinesTexture`, `XPatternTexture`, `WavesTexture`, `ScalesTexture`, `RidgeProfile`, `TextureLibrary` |
 | `parametros.py` | parâmetros principais editáveis (fronteira, pontos, exclusões...) |
+| `negatives.py` | `NegativeRenderer` (negativos: regiões, fronteiras, pontos) |
 | `transforms.py` | `TextureTransform`, `TransformedTexture` (distorção) |
 | `tiles.py` | `TileTexture`, `read_stl`, `rasterize_top`, `export_texture_templates` (ida e volta com CAD) |
 | `relief.py` | `ReliefBuilder`, `TextureAssigner`, `PointShape` (`CirclePoint`, `SquarePoint`, `TrianglePoint`), `HeightField` |
@@ -129,6 +135,8 @@ Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não 
 | `border_semicircle` | `False` | `True` = semicírculo perfeito (altura = largura/2). |
 | `border_exclusion_mm` | 1,0 | Faixa sem textura de cada lado, contada a partir da **borda** do cordão. Faixa livre total = largura + 2×valor. Sugestão: 0,5–0,7. |
 | `exclusion_fade_mm` | 0,3 | Rampa suave na saída da exclusão (0 = degrau). |
+| `exclusion_texture_scale` | 0,5 | **Suavização:** na zona de exclusão (cordões e pontos) entra uma versão da textura reduzida a esta escala, em vez de deixá-la lisa. 0 = desligado. Traços ficam mais finos (avisa se < `min_feature_warn_mm`). |
+| `exclusion_texture_height_factor` | 0,6 | Altura da textura reduzida em relação à normal (0,6 = 60%). |
 
 ### Pontos (encontros de 3+ regiões)
 | Parâmetro | Padrão | O que faz |
@@ -176,3 +184,10 @@ Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não 
 | `warp_amplitude_mm`, `warp_wavelength_mm` | Ondulam o padrão ("tortinho"): quanto desloca e a cada quantos mm. |
 
 - Fronteiras são traçadas entre pixels: regiões vizinhas **compartilham exatamente a mesma curva**.
+
+### Saídas (`output`)
+| Parâmetro | Padrão | O que faz |
+|---|---|---|
+| `base_dir` | `saida` | Pasta-base; cada imagem ganha a subpasta `<base_dir>/<nome_da_imagem>/`. |
+| `negatives` | `true` | Grava a pasta `negativos/` (regiões, fronteiras e pontos em preto e branco). |
+| `negatives_px_per_mm` | 10 | Resolução dos negativos em pixels por mm (limitada a ~4000 px no lado maior). |

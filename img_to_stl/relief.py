@@ -176,6 +176,7 @@ class ReliefBuilder:
         self._texture_cache: Dict[int, Texture] = {}
         self.warnings: List[str] = []
         self._region_textures: Dict[int, Texture] = {}
+        self._reduced_textures: Dict[int, Texture] = {}   # versão em escala menor p/ a zona de exclusão
         for rid, asg in self.assignments.items():
             if asg.texture_id == 0:
                 continue
@@ -183,6 +184,13 @@ class ReliefBuilder:
             if not asg.transform.is_identity():
                 tex = TransformedTexture(tex, asg.transform)
             self._region_textures[rid] = tex
+            if config.exclusion_texture_scale > 0:
+                small = TransformedTexture(tex, TextureTransform(scale=config.exclusion_texture_scale))
+                self._reduced_textures[rid] = small
+                if small.min_feature_mm is not None and small.min_feature_mm < config.min_feature_warn_mm:
+                    self.warnings.append(
+                        f"região {rid}: na zona de exclusão a textura reduzida ({config.exclusion_texture_scale:g}x) "
+                        f"tem traço mínimo de {small.min_feature_mm:.2f} mm (< {config.min_feature_warn_mm} mm)")
             if tex.min_feature_mm is not None and tex.min_feature_mm < config.min_feature_warn_mm:
                 self.warnings.append(
                     f"região {rid}: textura '{tex.name}' com traço mínimo de {tex.min_feature_mm:.2f} mm "
@@ -208,11 +216,20 @@ class ReliefBuilder:
         d_border = self._border_distance(X, Y, half + cfg.border_exclusion_mm + fade + cfg.resolution_mm)
         f_border = smoothstep((d_border - half - cfg.border_exclusion_mm) / fade)   # inf -> 1
 
-        tex = self._texture_layer(X, Y, labels)
         cord = self._cord_layer(d_border, half)
         pts, f_points = self._point_layers(X, Y, xs[0], ys[0], dx, dy, fade)
 
-        relief = np.maximum(np.maximum(tex * f_border * f_points, cord), pts)
+        # f = 1 fora das zonas de exclusão, 0 no miolo delas (cordão/ponto + margem).
+        f = f_border * f_points
+        tex = self._texture_layer(X, Y, labels)
+        if cfg.exclusion_texture_scale > 0:
+            # suavização: na zona de exclusão entra a textura reduzida (escala e altura menores)
+            small = self._texture_layer(X, Y, labels, reduced=True, only=f < 0.999)
+            tex = f * tex + (1.0 - f) * small
+        else:
+            tex = tex * f
+
+        relief = np.maximum(np.maximum(tex, cord), pts)
         z = (cfg.base_thickness_mm + relief).astype(np.float32)
         return HeightField(z=z, dx=float(dx), dy=float(dy))
 
@@ -223,16 +240,23 @@ class ReliefBuilder:
             self._texture_cache[texture_id] = TextureLibrary.create(texture_id, profile=self.profile, **params)
         return self._texture_cache[texture_id]
 
-    def _texture_layer(self, X, Y, labels) -> np.ndarray:
+    def _texture_layer(self, X, Y, labels, reduced: bool = False, only=None) -> np.ndarray:
+        """Altura (mm) da textura de cada região. reduced=True usa a versão em escala menor
+        (e altura menor); `only` (máscara) limita onde calcular, para poupar tempo."""
+        cfg = self.cfg
         tex = np.zeros(X.shape, dtype=np.float32)
+        textures = self._reduced_textures if reduced else self._region_textures
         for rid, asg in self.assignments.items():
             if asg.texture_id == 0:
                 continue
             mask = labels == rid
+            if only is not None:
+                mask &= only
             if not mask.any():
                 continue
+            amp = asg.amplitude_mm * (cfg.exclusion_texture_height_factor if reduced else 1.0)
             x, y = X[mask].astype(np.float64), Y[mask].astype(np.float64)
-            tex[mask] = (self._region_textures[rid].height(x, y) * asg.amplitude_mm).astype(np.float32)
+            tex[mask] = (textures[rid].height(x, y) * amp).astype(np.float32)
         return tex
 
     # ---- fronteiras ---- #

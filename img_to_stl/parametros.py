@@ -53,6 +53,17 @@ FRONTEIRA_EXCLUSAO_MM = 1.0
 # Rampa suave na saída da exclusão, para a textura não nascer num degrau. 0 = degrau.
 EXCLUSAO_TRANSICAO_MM = 0.3
 
+# ======================= SUAVIZAÇÃO DA ZONA DE EXCLUSÃO ======================= #
+# Em vez de deixar a faixa de exclusão (em volta de cordões e pontos) lisa, coloca ali uma versão
+# REDUZIDA da textura da região, para a transição ficar mais suave.
+# Escala do padrão reduzido: 0,5 = metade do tamanho (traços mais finos e mais juntos).
+# 0 = desligado (zona de exclusão lisa). Cuidado: traços ficam mais finos; abaixo de ~0,5 o
+# código avisa se o traço ficar menor que AVISO_TRACO_MIN_MM.
+EXCLUSAO_ESCALA_TEXTURA = 0.5
+# Altura da textura reduzida em relação à normal (0,6 = 60% de TEXTURA_AMPLITUDE). Traços mais
+# finos ficam mais frágeis/íngremes se mantiverem a altura cheia.
+EXCLUSAO_ALTURA_FATOR = 0.6
+
 # ======================= PONTOS (junções) ======================= #
 # Altura do ponto acima da base.
 PONTO_ALTURA_MM = 1.4
@@ -68,3 +79,11 @@ PONTO_FORMAS = {3: "triangle", 4: "square"}
 PONTO_FORMA_PADRAO = "circle"
 # Junções mais próximas que isso viram um único ponto.
 PONTO_DIST_FUSAO_MM = 1.5
+
+# ======================= SAÍDA ======================= #
+# Pasta-base das saídas. Cada imagem ganha uma subpasta própria: saida/<nome_da_imagem>/
+PASTA_SAIDA = "saida"
+# True = além do STL, grava a subpasta negativos/ (regiões, fronteiras e pontos em preto e branco).
+GERAR_NEGATIVOS = True
+# Resolução dos negativos (pixels por mm). 10 = 0,1 mm por pixel (limitado a ~4000 px no lado maior).
+NEGATIVOS_PX_POR_MM = 10.0

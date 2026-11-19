@@ -3,12 +3,27 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 from .config import PipelineConfig
 from .relief import HeightField, ReliefBuilder
 from .stl_export import HeightfieldMesher, Mesh
+from .negatives import NegativeRenderer
 from .vision import ImageReader, PlanarMap
+
+
+def resolve_outputs(image_path: str, output: Optional[str] = None, base_dir: str = "saida") -> Tuple[str, str]:
+    """Define (pasta de saída, caminho do STL) para uma imagem.
+
+    - output None            -> <base_dir>/<nome_da_imagem>/<nome_da_imagem>.stl
+    - output termina em .stl -> esse caminho exato; o resto vai na mesma pasta
+    - output = pasta         -> <pasta>/<nome_da_imagem>/<nome_da_imagem>.stl
+    """
+    stem = os.path.splitext(os.path.basename(image_path))[0]
+    if output and output.lower().endswith(".stl"):
+        return os.path.dirname(os.path.abspath(output)), output
+    out_dir = os.path.join(output or base_dir, stem)
+    return out_dir, os.path.join(out_dir, stem + ".stl")
 
 
 class ImageToReliefPipeline:
@@ -16,7 +31,7 @@ class ImageToReliefPipeline:
 
         pipe = ImageToReliefPipeline(PipelineConfig())
         pmap = pipe.read("imagem.png", out_dir="saida")      # parte 1 (+ preview com os ids das regiões)
-        pipe.run("imagem.png", "saida/peca.stl")             # tudo
+        pipe.run("imagem.png")                               # tudo, em saida/imagem/ (STL + previews + negativos)
     """
 
     def __init__(self, config: Optional[PipelineConfig] = None, verbose: bool = True):
@@ -36,6 +51,11 @@ class ImageToReliefPipeline:
             os.makedirs(out_dir, exist_ok=True)
             pmap.render_preview(os.path.join(out_dir, "regioes_preview.png"))
             pmap.save_json(os.path.join(out_dir, "mapa.json"), include_geometry=True)
+            if self.config.output.negatives:
+                t1 = time.time()
+                NegativeRenderer(pmap, self.config.relief, self.config.output).save(os.path.join(out_dir, "negativos"))
+                self._log(f"[negativos] regioes, fronteiras, pontos e composto em {out_dir}/negativos  "
+                          f"({time.time() - t1:.1f}s)")
         return pmap
 
     def build_heightfield(self, pmap: PlanarMap) -> HeightField:
@@ -61,9 +81,15 @@ class ImageToReliefPipeline:
                   f"{size_mb:.1f} MB -> {stl_path}  ({time.time() - t0:.1f}s)")
         return mesh
 
-    def run(self, image_path: str, stl_path: str, out_dir: Optional[str] = None) -> Mesh:
+    def run(self, image_path: str, stl_path: Optional[str] = None, out_dir: Optional[str] = None) -> Mesh:
+        if stl_path is None:
+            auto_dir, stl_path = resolve_outputs(image_path, None, self.config.output.base_dir)
+            out_dir = out_dir or auto_dir
         out_dir = out_dir or os.path.dirname(os.path.abspath(stl_path))
+        os.makedirs(out_dir, exist_ok=True)
         pmap = self.read(image_path, out_dir)
         hf = self.build_heightfield(pmap)
         hf.save_shaded_preview(os.path.join(out_dir, "relevo_preview.png"))
-        return self.export(hf, stl_path)
+        mesh = self.export(hf, stl_path)
+        self._log(f"[saída] tudo em: {os.path.abspath(out_dir)}")
+        return mesh

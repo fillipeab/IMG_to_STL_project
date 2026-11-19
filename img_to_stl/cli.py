@@ -1,8 +1,8 @@
 """Linha de comando.
 
 Fluxo recomendado (2 passos):
-  1) python -m img_to_stl imagem.png --read-only -o saida        # gera regioes_preview.png com os ids
-  2) python -m img_to_stl imagem.png -o saida/peca.stl --textures 0=1,1=2,2=3,3=4
+  1) python -m img_to_stl imagem.png --read-only          # saida/imagem/regioes_preview.png com os ids
+  2) python -m img_to_stl imagem.png --textures 0=1,1=2,2=3,3=4   # saida/imagem/imagem.stl + negativos/
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if __package__ in (None, ""):   # rodado como arquivo (python img_to_stl/cli.py)
     __package__ = "img_to_stl"
 
 from .config import PipelineConfig  # noqa: E402
-from .pipeline import ImageToReliefPipeline  # noqa: E402
+from .pipeline import ImageToReliefPipeline, resolve_outputs  # noqa: E402
 from .textures import TextureLibrary  # noqa: E402
 
 
@@ -25,8 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("image", nargs="?", help="imagem de entrada (png, jpg...)")
     p.add_argument("--export-textures", metavar="PASTA",
                    help="grava um tile (STL+PNG+JSON) de cada textura interna para editar no CAD e sai")
-    p.add_argument("-o", "--output", default="saida/peca.stl",
-                   help="STL de saída (com --read-only, vira a pasta de saída)")
+    p.add_argument("-o", "--output", default=None,
+                   help="pasta-base (padrão: 'saida'); cada imagem ganha a subpasta <pasta>/<nome_da_imagem>/. "
+                        "Se terminar em .stl, usa esse caminho exato para o STL")
+    p.add_argument("--no-negatives", action="store_true", help="não grava a pasta negativos/")
     p.add_argument("--config", help="JSON de configuração (valores do arquivo são a base)")
     p.add_argument("--save-config", help="salva a configuração final neste JSON")
     p.add_argument("--read-only", action="store_true", help="só a parte 1: gera previews e mapa.json")
@@ -85,16 +87,18 @@ def main(argv=None) -> int:
         build_parser().error("informe a imagem (ou use --export-textures PASTA)")
     cfg = PipelineConfig.from_json(args.config) if args.config else PipelineConfig()
     apply_overrides(cfg, args)
+    if args.no_negatives:
+        cfg.output.negatives = False
     if args.save_config:
         cfg.to_json(args.save_config)
 
     pipe = ImageToReliefPipeline(cfg)
+    out_dir, stl_path = resolve_outputs(args.image, args.output, cfg.output.base_dir)
     if args.read_only:
-        pipe.read(args.image, out_dir=args.output)
-        print(f"Previews em {args.output}/ — veja regioes_preview.png e escolha as texturas com --textures")
+        pipe.read(args.image, out_dir=out_dir)
+        print(f"Previews em {out_dir}/ — veja regioes_preview.png e escolha as texturas com --textures")
         return 0
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-    pipe.run(args.image, args.output)
+    pipe.run(args.image, stl_path, out_dir)
     return 0
 
 

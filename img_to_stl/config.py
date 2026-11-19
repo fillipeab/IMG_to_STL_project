@@ -123,6 +123,13 @@ class ReliefConfig:
     # Rampa suave na saída da exclusão, para a textura não "nascer" num degrau. 0 = degrau. [parametros.py]
     exclusion_fade_mm: float = P.EXCLUSAO_TRANSICAO_MM
 
+    # --- suavização da zona de exclusão ---
+    # Escala da textura reduzida colocada na zona de exclusão (cordões e pontos) em vez de deixá-la lisa.
+    # 0,5 = metade do tamanho; 0 = desligado (zona lisa). [parametros.py]
+    exclusion_texture_scale: float = P.EXCLUSAO_ESCALA_TEXTURA
+    # Altura da textura reduzida relativa à normal (0,6 = 60%). [parametros.py]
+    exclusion_texture_height_factor: float = P.EXCLUSAO_ALTURA_FATOR
+
     # --- pontos ---
     # Altura do ponto acima da base (mm). [parametros.py]
     point_height_mm: float = P.PONTO_ALTURA_MM
@@ -144,6 +151,21 @@ class ReliefConfig:
             raise ValueError("resolution_mm deve ser > 0.")
         if self.border_width_mm <= 0 or self.point_size_mm <= 0:
             raise ValueError("border_width_mm e point_size_mm devem ser > 0.")
+        if self.exclusion_texture_scale < 0 or self.exclusion_texture_height_factor < 0:
+            raise ValueError("exclusion_texture_scale e exclusion_texture_height_factor devem ser >= 0.")
+
+
+# --------------------------------------------------------------------------- #
+# Saídas (pastas e imagens "negativas")
+# --------------------------------------------------------------------------- #
+@dataclass
+class OutputConfig:
+    # Pasta-base; cada imagem ganha uma subpasta "<base_dir>/<nome_da_imagem>/". [parametros.py]
+    base_dir: str = P.PASTA_SAIDA
+    # True = grava negativos/ (regiões, fronteiras e pontos em preto e branco). [parametros.py]
+    negatives: bool = P.GERAR_NEGATIVOS
+    # Resolução dos negativos em pixels por mm (limitada a ~4000 px no lado maior). [parametros.py]
+    negatives_px_per_mm: float = P.NEGATIVOS_PX_POR_MM
 
 
 
@@ -173,6 +195,11 @@ AJUDA: Dict[str, Dict[str, str]] = {
         "max_points": "Mantém só os N pontos de maior valência. null = todos.",
         "random_seed": "Semente do k-means: o mesmo valor repete o mesmo resultado.",
     },
+    "output": {
+        "base_dir": "Pasta-base das saídas; cada imagem ganha uma subpasta com o nome dela.",
+        "negatives": "true = grava a pasta negativos/ (regiões, fronteiras e pontos em preto e branco).",
+        "negatives_px_per_mm": "Resolução dos negativos em pixels por mm (limitada a ~4000 px no lado maior).",
+    },
     "relief": {
         "resolution_mm": "Passo da grade (mm). Menor = mais detalhe e STL maior (100x100 mm a 0,1 = ~200 MB; teste com 0,2-0,3).",
         "base_thickness_mm": "Espessura (mm) da placa lisa sob todo o relevo. Deve ser > 0.",
@@ -189,6 +216,8 @@ AJUDA: Dict[str, Dict[str, str]] = {
         "border_semicircle": "true = semicírculo perfeito (altura = largura/2).",
         "border_exclusion_mm": "Faixa sem textura de cada lado, contada a partir da BORDA do cordão. Faixa livre total = largura + 2 x valor.",
         "exclusion_fade_mm": "Rampa suave (mm) na saída da exclusão. 0 = degrau.",
+        "exclusion_texture_scale": "Escala da textura reduzida na zona de exclusão (0,5 = metade). 0 = desligado (zona lisa).",
+        "exclusion_texture_height_factor": "Altura da textura reduzida relativa à normal (0,6 = 60%).",
         "point_height_mm": "Altura (mm) do ponto acima da base.",
         "point_size_mm": "Diâmetro (círculo) ou lado (quadrado/triângulo), em mm.",
         "point_flank_mm": "Largura (mm) da rampa inclinada em volta da forma do ponto.",
@@ -202,13 +231,14 @@ AJUDA: Dict[str, Dict[str, str]] = {
 class PipelineConfig:
     vision: VisionConfig = field(default_factory=VisionConfig)
     relief: ReliefConfig = field(default_factory=ReliefConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
 
     # ---- JSON ---- #
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def to_json(self, path: str, comments: bool = True) -> None:
-        """Grava o JSON. Com comments=True, cada parâmetro vem precedido de uma nota "_nome"."""
+    def to_json(self, path: str, comments: bool = False) -> None:
+        """Grava o JSON. Por padrão grava só os valores; com comments=True, cada parâmetro vem precedido de uma nota "_nome"."""
         data = self.to_dict()
         if comments:
             data = {sec: _with_notes(vals, AJUDA.get(sec, {})) for sec, vals in data.items()}
@@ -222,6 +252,7 @@ class PipelineConfig:
         return cls(
             vision=_dataclass_from_dict(VisionConfig, data.get("vision", {})),
             relief=_dataclass_from_dict(ReliefConfig, data.get("relief", {})),
+            output=_dataclass_from_dict(OutputConfig, data.get("output", {})),
         )
 
     @classmethod

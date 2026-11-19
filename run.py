@@ -1,7 +1,7 @@
 """Atalho para rodar sem instalar.
 
-  python run.py                      -> pergunta o endereço da imagem e gera saida/peca.stl
-  python run.py imagem.png -o x.stl  -> igual a `python -m img2stl imagem.png -o x.stl`
+  python run.py                      -> pergunta o endereço da imagem e gera saida/<nome_da_imagem>/
+  python run.py imagem.png -o x.stl  -> igual a `python -m img_to_stl imagem.png -o x.stl`
 """
 import os
 import sys
@@ -25,5 +25,5 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
         imagem = pedir_imagem()
-        args = [imagem, "-o", os.path.join("saida", "peca.stl")]
+        args = [imagem]
     sys.exit(main(args))
