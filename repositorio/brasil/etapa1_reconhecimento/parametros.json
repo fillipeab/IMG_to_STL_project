@@ -9,7 +9,11 @@
   "max_regions": 12,
   "min_region_area_mm2": 15.0,
   "min_region_thickness_mm": 1.0,
-  "ignore_color": null,
+  "ignore_color": [
+    0,
+    0,
+    0
+  ],
   "ignore_tolerance": 15.0,
   "merge_regions": [],
   "family_tolerance": 25.0,

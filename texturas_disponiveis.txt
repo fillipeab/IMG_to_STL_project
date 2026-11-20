@@ -1,0 +1,38 @@
+TEXTURAS DISPONÍVEIS — img_to_stl
+(gerado por: python -m img_to_stl --list-textures)
+
+Como usar: no texturas.json, "REGIAO": "nome/id(distorções)" — pelo nome ou pelo número.
+  Ex.: "ondas/3"   "3"   "ondas/3(escala=1.5, alongar=2, angulo=30)"   "lisa/0"
+Distorções: escala, alongar, angulo, cisalhar, rotacao, desloc_x, desloc_y, onda_amp, onda_comp, amp (altura, mm).
+Parâmetros próprios de cada textura vão em texture_params (parametros.json da etapa 2), ex.: {"6": {"pitch": 5.0}}.
+Todas as internas repetem num tile de 10 mm: pitch/célula devem dividir 10.
+
+ id  nome              descrição
+  0  lisa              sem relevo: superfície lisa
+  1  linhas diagonais  linhas diagonais a 45°
+                     parâmetros: pitch=2.5, width=0.8, direction=-1
+  2  X's               X grande em cada célula, com mini-X entre eles
+                     parâmetros: cell=5, w_big=0.8, w_mini=0.6, mini_ratio=0.75, corner_height=0, corner_gap=None
+  3  ondas             ondas tortinhas, em fileiras
+                     parâmetros: wavelength=5, wave_amplitude=1, pitch=2.5, width=0.8
+  4  escamas           escamas sobrepostas (arcos)
+                     parâmetros: scale_width=5, width=0.8
+  5  losangos          losangos em pirâmide
+                     parâmetros: diag_x=5, diag_y=5, apex_round=0
+  6  pontos            cúpulas pequenas em grade
+                     parâmetros: pitch=2.5, diameter=1.6
+  7  xadrez            quadrados altos e baixos alternados
+                     parâmetros: cell=2.5, bevel=0.4
+  8  grade             traços cruzados na horizontal e vertical
+                     parâmetros: pitch=2.5, width=0.8
+  9  zigue-zague       traços em V, como espinha de peixe
+                     parâmetros: pitch=2.5, amp=1.25, period=5, width=0.8
+ 10  aneis             anéis concêntricos com ponto central
+                     parâmetros: cell=5, radius=1.4, width=0.8
+ 11  tijolos           tijolos em fileiras desencontradas
+                     parâmetros: brick_w=5, brick_h=2.5, mortar=0.8, bevel=0.3
+ 12  colinas           ondulado suave nos dois sentidos
+                     parâmetros: period=5
+
+0 é a textura lisa (sem relevo). Ids >= 100: suas texturas de CAD/PNG (pasta texture_dir, arquivos <id>_<nome>.stl|png);
+elas aparecem aqui quando a lista é gerada com --texture-dir PASTA.

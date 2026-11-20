@@ -3,7 +3,8 @@
     python -m img_to_stl projetos                              lista os projetos do repositório
     python -m img_to_stl projeto NOME ver                      estado, resumo e texturas
     python -m img_to_stl projeto NOME regioes                  regiões numeradas (nome, família, área)
-    python -m img_to_stl projeto NOME fundir ESPEC [ESPEC...]  funde regiões: 3,7 | familia | menores=50 | cor=verde,lilas
+    python -m img_to_stl projeto NOME fundir ESPEC [ESPEC...]  funde regiões: 3,7 | familia | parecidas=8 | menores=50 | cor=verde,lilas
+    python -m img_to_stl projeto NOME fundo REGIAO...           região(ões) de fundo (lisas): números/nomes | nenhuma | auto
     python -m img_to_stl projeto NOME textura REGIAO=ESPEC...  muda texturas (ex.: 3=ondas/3(1.5) 0=lisa)
     python -m img_to_stl projeto NOME reconhecer               refaz a etapa 1
     python -m img_to_stl projeto NOME gerar                    etapa 2: gera o STL
@@ -15,14 +16,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from typing import List, Optional
 
 from .config import PipelineConfig
 from .etapa1_reconhecimento.criterios import parse_fusion, resolve_fusion
+from .etapa2_texturas.pipeline import apply_background
 from .etapa2_texturas.texturas_arquivo import set_entry
 from .pipeline import PASTA_ETAPA1, PASTA_ETAPA2, ImageToStl
 
-ACOES = ("ver", "regioes", "fundir", "textura", "reconhecer", "gerar", "abrir")
+ACOES = ("ver", "regioes", "fundir", "fundo", "textura", "reconhecer", "gerar", "abrir")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resolution", type=float, help="resolução da grade (mm)")
     p.add_argument("--amplitude", type=float, help="altura das texturas (mm)")
     p.add_argument("--smooth-region", dest="smooth_region", help="região lisa: externa, maior, nenhuma ou nome/número")
+    p.add_argument("--sim", action="store_true", help="fundir sem perguntar (por padrão, num terminal, mostra o plano e pergunta)")
     p.add_argument("--interface", choices=["principal", "auxiliar"], default="principal", help="só para 'abrir'")
     return p
 
@@ -110,12 +114,28 @@ def executar(app: ImageToStl, args: argparse.Namespace, out=print) -> int:
                 return 2
             for text in extra:
                 entry = parse_fusion(text, pmap)
+                if isinstance(entry, str) and not args.sim and sys.stdin.isatty():
+                    from .interativo import confirm_fusion       # mostra quantas regiões e deixa mudar o limite
+                    entry = confirm_fusion(pmap, entry, input, out)
+                    if entry is None:
+                        out("Cancelado.")
+                        return 0
                 groups = resolve_fusion(pmap, entry)
                 names = "; ".join(" + ".join(pmap.regions[i].name for i in g) for g in groups)
                 new = app.fundir_regioes(proj, pmap, entry)
                 out(f"✓ {names}  →  {len(pmap.regions)} → {len(new.regions)} regiões")
                 pmap = new
             out("Obs.: as texturas foram refeitas (a sugestão antiga ficou em texturas.json.antigo, se existia).")
+        elif acao == "fundo":
+            apply_background(pmap, e2)
+            if not extra:
+                atual = [r.name for r in pmap.regions if r.ignored]
+                out(f"Fundo atual: {', '.join(atual) or 'nenhum'}  (para mudar: fundo 3 | fundo nenhuma | fundo auto)")
+                return 0
+            refs = None if extra == ["auto"] else [] if extra[0].lower() in ("nenhuma", "nenhum") else extra
+            fundo = app.etapa2().set_background(pmap, os.path.join(proj, PASTA_ETAPA2), refs)
+            out(f"✓ Fundo: {', '.join(pmap.regions[i].name for i in fundo) or 'nenhum'} "
+                f"(lisa; fora da base silhueta). Para refazer o STL: projeto {name} gerar")
         elif acao == "textura":
             if not extra:
                 out("Texturas atuais (para mudar: textura REGIAO=ESPEC, ex.: 3=ondas/3(1.5)):")

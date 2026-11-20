@@ -4,6 +4,7 @@ Uma "fusão" é um item de `merge_regions`: lista de números de região ([3, 7]
     "familia"            funde as regiões irmãs (mesma família) que se tocam
     "familia=2"          idem, só da família de número 2 (ou pelo nome)
     "menores=50"         cada região com menos de 50 mm² vai para a vizinha de cor mais parecida
+    "parecidas=8"        vizinhas com diferença de cor (ΔE) menor que 8 viram uma só (as mais parecidas primeiro)
     "cor=verde,lilas"    todas as regiões de cada cor viram uma só ("cor=verde+lilas" = verde e lilás numa só)
 """
 from __future__ import annotations
@@ -19,7 +20,9 @@ from .cores import rgb_to_lab
 from .modelos import PlanarMap
 
 Fusao = Union[List[int], str]
-CRITERIOS = ("familia", "menores", "cor")
+CRITERIOS = ("familia", "menores", "cor", "parecidas")
+# critérios com "limite aceitável" que o usuário pode ajustar: nome -> (descrição, unidade)
+LIMITES = {"menores": ("limite de área", "mm²"), "parecidas": ("limite de diferença de cor", "ΔE")}
 
 
 def _norm(text: str) -> str:
@@ -32,16 +35,17 @@ def parse_fusion(text: str, pmap: Optional[PlanarMap] = None) -> Fusao:
     t = _norm(text)
     if not t:
         raise ValueError("fusão vazia")
-    m = re.match(r"^(familia|menores|cor)\b[\s=]*(.*)$", t)
+    t = re.sub(r"^(semelhantes|similares)\b", "parecidas", t)
+    m = re.match(r"^(familia|menores|cor|parecidas)\b[\s=]*(.*)$", t)
     if m:
         kind, arg = m.group(1), m.group(2).strip()
         if kind == "familia":
             return "familia" + (f"={arg}" if arg else "")
         if not arg:
             raise ValueError(f"informe o valor: '{kind}=...'")
-        if kind == "menores":
+        if kind in LIMITES:
             float(arg.replace(",", "."))                          # valida o número
-            return f"menores={arg.replace(',', '.')}"
+            return f"{kind}={arg.replace(',', '.')}"
         return "cor=" + ",".join(arg.replace(",", " ").split())
     by_name = {_norm(r.name): r.id for r in pmap.regions} if pmap else {}
     ids: List[int] = []
@@ -70,6 +74,55 @@ def _components(members: Sequence[int], adj: Dict[int, set]) -> List[List[int]]:
     return out
 
 
+class _Sim:
+    """Simula fusões de vizinhas (área e cor ponderadas) para os critérios com limite."""
+
+    def __init__(self, regions, adj):
+        self.area = {r.id: r.area_mm2 for r in regions}
+        self.lab = {r.id: rgb_to_lab(r.color_rgb) for r in regions}
+        self.ignored = {r.id: r.ignored for r in regions}
+        self.nb = {k: set(v) for k, v in adj.items()}
+        self.parent = {r.id: r.id for r in regions}
+
+    def delta(self, a: int, b: int) -> float:
+        return float(np.linalg.norm(self.lab[a] - self.lab[b]))
+
+    def absorb(self, a: int, b: int) -> None:
+        """`b` absorve `a`."""
+        tot = self.area[a] + self.area[b]
+        self.lab[b] = (self.lab[a] * self.area[a] + self.lab[b] * self.area[b]) / tot
+        self.area[b] = tot
+        self.nb[b] |= self.nb[a] - {b}
+        for n in self.nb[a]:
+            self.nb[n].discard(a)
+            if n != b:
+                self.nb[n].add(b)
+        del self.nb[a]
+        self.parent[a] = b
+
+    def groups(self) -> List[List[int]]:
+        comp: Dict[int, List[int]] = {}
+        for i in self.parent:
+            r = i
+            while self.parent[r] != r:
+                r = self.parent[r]
+            comp.setdefault(r, []).append(i)
+        return [sorted(v) for v in comp.values() if len(v) > 1]
+
+
+def limit_of(entry: Fusao):
+    """(tipo, valor) se o critério tem limite ajustável; senão None."""
+    if isinstance(entry, str):
+        kind, _, arg = entry.partition("=")
+        if kind in LIMITES and arg:
+            return kind, float(arg)
+    return None
+
+
+def with_limit(entry: str, value: float) -> str:
+    return f"{entry.partition('=')[0]}={value:g}"
+
+
 def resolve_fusion(pmap: PlanarMap, entry: Fusao) -> List[List[int]]:
     """Item de fusão -> grupos de regiões a fundir (cada grupo com 2+). Levanta ValueError se não houver nada."""
     if not isinstance(entry, str):
@@ -94,39 +147,29 @@ def resolve_fusion(pmap: PlanarMap, entry: Fusao) -> List[List[int]]:
             raise ValueError("nenhuma família com regiões vizinhas para fundir"
                              + (" (família não encontrada?)" if arg else ""))
 
-    elif kind == "menores":
+    elif kind in LIMITES:
         limit = float(arg.replace(",", "."))
-        area = {r.id: r.area_mm2 for r in regions}
-        lab = {r.id: rgb_to_lab(r.color_rgb) for r in regions}
-        nb = {k: set(v) for k, v in adj.items()}
-        parent = {r.id: r.id for r in regions}
-        ignored = {r.id: r.ignored for r in regions}
-        while True:
-            small = [i for i in nb if area[i] < limit and nb[i]]
-            if not small:
-                break
-            a = min(small, key=lambda i: area[i])
-            same = [n for n in nb[a] if ignored[n] == ignored[a]] or list(nb[a])   # evita engolir o fundo
-            b = min(same, key=lambda n: float(np.linalg.norm(lab[a] - lab[n])))
-            tot = area[a] + area[b]                                  # b absorve a
-            lab[b] = (lab[a] * area[a] + lab[b] * area[b]) / tot
-            area[b] = tot
-            nb[b] |= nb[a] - {b}
-            for n in nb[a]:
-                nb[n].discard(a)
-                if n != b:
-                    nb[n].add(b)
-            del nb[a]
-            parent[a] = b
-        comp: Dict[int, List[int]] = {}
-        for i in parent:
-            r = i
-            while parent[r] != r:
-                r = parent[r]
-            comp.setdefault(r, []).append(i)
-        groups = [sorted(v) for v in comp.values() if len(v) > 1]
+        sim = _Sim(regions, adj)
+        if kind == "menores":
+            while True:
+                small = [i for i in sim.nb if sim.area[i] < limit and sim.nb[i]]
+                if not small:
+                    break
+                a = min(small, key=lambda i: sim.area[i])
+                same = [n for n in sim.nb[a] if sim.ignored[n] == sim.ignored[a]] or list(sim.nb[a])  # evita engolir o fundo
+                sim.absorb(a, min(same, key=lambda n: sim.delta(a, n)))
+        else:
+            while True:
+                pairs = [(sim.delta(a, b), a, b) for a in sim.nb for b in sim.nb[a]
+                         if a < b and sim.ignored[a] == sim.ignored[b]]
+                best = min((p for p in pairs if p[0] < limit), default=None)
+                if best is None:
+                    break
+                sim.absorb(best[1], best[2])
+        groups = sim.groups()
         if not groups:
-            raise ValueError(f"nenhuma região com menos de {limit:g} mm² (e com vizinha) para fundir")
+            what = f"menos de {limit:g} mm²" if kind == "menores" else f"diferença de cor (ΔE) menor que {limit:g}"
+            raise ValueError(f"nenhuma região com {what} (e com vizinha) para fundir")
 
     elif kind == "cor":
         if not arg:

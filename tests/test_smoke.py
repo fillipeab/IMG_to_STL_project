@@ -352,6 +352,15 @@ def test_fusao_por_criterio():
             except ValueError:
                 continue
             raise AssertionError(bad)
+        # parecidas=ΔE e o diálogo que deixa mudar o limite
+        from img_to_stl.interativo import confirm_fusion
+        assert parse_fusion("semelhantes 8") == "parecidas=8"
+        assert resolve_fusion(pm, "parecidas=60")[0] == [0, 2]            # laranja e amarelo: ΔE ~35
+        ans, log = iter(["l", "abc", "l", "60", "", ]), []
+        final = confirm_fusion(pm, "parecidas=5", lambda m: next(ans), log.append)
+        assert final == "parecidas=60" and any("Vai fundir 1 região" in m for m in log)
+        assert any("não é um número" in m for m in log)
+        assert confirm_fusion(pm, "parecidas=60", lambda m: "c", log.append) is None
         # repetição fiel pela configuração: criterio guardado em merge_regions
         cfg = Etapa1Config(merge_regions=["menores=100", [0, 1]])
         n = len(ImageReader(cfg).read(_demo(d)).regions)
@@ -381,10 +390,67 @@ def test_cli_por_objeto_e_interface_auxiliar():
         app = ImageToStl(cfg)
         respostas = iter(["2", "1", "2",                  # operar em existente > #1 > etapa 2
                           "a", "1", "2", "1.5", "", "",   # ajustar > grupo 1 > base_thickness_mm = 1.5 > voltar > pronto
+                          "f", "n", "",                   # fundo: escolher > nenhuma
                           "", "", "0"])                   # texturas, gerar, sair
         log = []
         menu_aux(app, ask=lambda m: next(respostas), out=log.append)
         assert cfg.etapa2.base_thickness_mm == 1.5 and "Grupos de parâmetros" in "\n".join(log)
+        assert cfg.etapa2.background_regions == [] and "Fundo: nenhuma" in "\n".join(log)
+
+
+def test_fundo_na_etapa2_e_catalogo_de_texturas(tmp_path=None):
+    from img_to_stl.etapa2_texturas.pipeline import Etapa2, apply_background
+    with tempfile.TemporaryDirectory() as d:
+        pm = ImageReader(Etapa1Config()).read(_demo(d))
+        cfg = Etapa2Config(resolution_mm=0.5)
+        e2, out_dir = Etapa2(cfg), os.path.join(d, "e2")
+        assert not any(r.ignored for r in pm.regions)
+        fundo = e2.set_background(pm, out_dir, [pm.regions[3].name])       # por nome
+        assert fundo == [3] and pm.regions[3].ignored and cfg.background_regions == [pm.regions[3].name]
+        assert Etapa2Config.from_json(os.path.join(out_dir, "parametros.json")).background_regions == cfg.background_regions
+        path, asg = e2.prepare_textures(pm, out_dir)
+        assert asg[3].texture_id == 0                                      # fundo = lisa
+        assert e2.set_background(pm, out_dir, ["5"]) == [5] and json.load(open(path))["regioes"][pm.regions[5].name] == "lisa/0"
+        assert e2.set_background(pm, out_dir, []) == [] and e2.set_background(pm, out_dir, None) == []   # nenhuma / reconhecido (nada)
+        try:
+            e2.set_background(pm, out_dir, ["zzz"])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("região inexistente deveria falhar")
+        # base silhueta deixa o fundo de fora
+        cfg.base_mode = "silhueta"
+        e2.set_background(pm, out_dir, ["0"])
+        from img_to_stl.etapa2_texturas.relevo import ReliefBuilder
+        assert 0 not in ReliefBuilder(pm, cfg, asg)._base_region_ids()
+    # arquivo de catálogo de texturas
+    txt = TextureLibrary.catalog_text()
+    assert "zigue-zague" in txt and "pitch=2.5" in txt and "lisa" in txt
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "texturas_disponiveis.txt")
+    assert os.path.isfile(here) and open(here, encoding="utf-8").read() == txt   # o arquivo da pasta principal está em dia
+
+
+def test_editar_texturas_json_e_regerar():
+    from img_to_stl.cli_projeto import main as projeto_main
+    from img_to_stl.cli import main as cli_main
+    with tempfile.TemporaryDirectory() as d:
+        repo, saidas = os.path.join(d, "repositorio"), os.path.join(d, "saidas")
+        assert cli_main([_demo(d, "e.png"), "--auto", "-o", repo, "--saidas", saidas, "--resolution", "0.5", "--no-negatives"]) == 0
+        stl = os.path.join(saidas, "e.stl")
+        antes = open(stl, "rb").read()
+        tj = os.path.join(repo, "e", "etapa2_texturas", "texturas.json")
+        data = json.load(open(tj, encoding="utf-8"))
+        nome = list(data["regioes"])[1]
+        data["regioes"][nome] = "tijolos/11(escala=1.5)"
+        json.dump(data, open(tj, "w", encoding="utf-8"), ensure_ascii=False)
+        log = []
+        assert projeto_main(["projeto", "e", "gerar", "-o", repo, "--saidas", saidas, "--resolution", "0.5"], out=log.append) == 0
+        assert open(stl, "rb").read() != antes                              # regerou com a textura nova
+        data["regioes"][nome] = "tijolos/11(escalaa=1.5)"                   # erro de digitação: mensagem clara, STL intacto
+        json.dump(data, open(tj, "w", encoding="utf-8"), ensure_ascii=False)
+        depois = open(stl, "rb").read()
+        assert projeto_main(["projeto", "e", "gerar", "-o", repo, "--saidas", saidas], out=log.append) == 2
+        assert "escalaa" in log[-1] and open(stl, "rb").read() == depois
 
 
 def test_pontos_triplices_so_viram_relevo_se_ligados():
@@ -462,12 +528,13 @@ def test_cli_automatico_menu_e_repositorio():
             "2", "8", "",                           # etapa 1: parâmetro 2 (max_regions) = 8 > continuar
             "",                                     # seguir para a etapa 2
             "",                                     # parâmetros da etapa 2: continuar
+            "",                                     # região de fundo: manter
             "1", "escamas/4", "",                   # região 1 > textura > aceitar
             "",                                     # gerar agora
             "1", novo, "n", "outra_v2",             # importa de novo: conflito -> novo nome
-            "", "", "", "", "",                     # tudo com padrões
+            "", "", "", "", "", "",                 # tudo com padrões
             "2", "2", "2",                          # operar em existente: lista, escolhe #2 (outra) -> etapa 2
-            "", "", "",                             # parâmetros, texturas, gerar
+            "", "", "", "",                         # parâmetros, fundo, texturas, gerar
             "3", "0",                               # troca de interface e sai
         ])
         log = []

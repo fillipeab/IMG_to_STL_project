@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--clusters", type=int, help="cores iniciais do k-means")
     g.add_argument("--ignore-color", metavar="R,G,B", help="cor de fundo (região lisa; fora da base 'silhueta')")
     g.add_argument("--fundir", action="append", metavar="ESPEC",
-                   help="funde regiões (repetível, em ordem). ESPEC: números (3,7) ou critério: familia | menores=50 | cor=verde,lilas")
+                   help="funde regiões (repetível, em ordem). ESPEC: números (3,7) ou critério: familia | parecidas=8 | menores=50 | cor=verde,lilas")
     g.add_argument("--marker", action="append", metavar="CLASSE=R,G,B[,TOL]",
                    help="marcador de pontos de interesse: bolinhas dessa cor viram pontos da classe (repetível)")
     g.add_argument("--points-file", help="arquivo .json/.csv de pontos de interesse (classe, nome, x_px, y_px)")
@@ -70,6 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--base-regions", help="ids das regiões da base 'silhueta', ex.: 0,1,3")
     g.add_argument("--smooth-region", dest="smooth_region",
                    help="região lisa da sugestão: externa (padrão), maior, nenhuma, ou nome/número da região")
+    g.add_argument("--background-regions", dest="background_regions", metavar="R,R",
+                   help="regiões de fundo (lisas; fora da base silhueta): números ou nomes; 'nenhuma' = nenhuma")
     g.add_argument("--amplitude", type=float, help="altura das texturas (mm)")
     g.add_argument("--textura", action="append", metavar="REGIAO=ESPEC",
                    help=f"textura de uma região (número ou nome), ex.: 3=ondas/3(1.5,2,30) (repetível). "
@@ -106,6 +108,9 @@ def apply_overrides(cfg: PipelineConfig, a: argparse.Namespace) -> None:
                       ("texture_dir", a.texture_dir), ("smooth_region", a.smooth_region)):
         if val is not None:
             setattr(e2, attr, val)
+    if a.background_regions:
+        e2.background_regions = [] if a.background_regions.lower() in ("nenhuma", "nenhum") \
+            else [v.strip() for v in a.background_regions.split(",")]
     if a.base_regions:
         e2.base_regions = [int(v) for v in a.base_regions.split(",")]
     if a.model_triple_points:
@@ -130,6 +135,7 @@ def main(argv=None) -> int:
             TextureLibrary.load_directory(args.texture_dir)
         for tid, name, desc in TextureLibrary.catalog():
             print(f"{tid:>3}  {name:<18}{desc}")
+        print(f"\n(lista completa, com parâmetros: {TextureLibrary.write_catalog()})")
         return 0
     if args.export_textures:
         from .etapa2_texturas.biblioteca import export_texture_templates

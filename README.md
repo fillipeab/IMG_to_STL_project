@@ -33,6 +33,7 @@ Escolha com `python -m img_to_stl --interface auxiliar` ou, no menu inicial, `3)
 python -m img_to_stl projetos                              # lista os projetos
 python -m img_to_stl projeto demo ver                      # estado, resumo e texturas
 python -m img_to_stl projeto demo regioes                  # regiões numeradas
+python -m img_to_stl projeto demo fundo 3                  # região 3 vira o fundo (lisa, fora da base silhueta)
 python -m img_to_stl projeto demo fundir menores=50        # funde (ver abaixo)
 python -m img_to_stl projeto demo textura 3=ondas/3(1.5)   # muda a textura de uma região
 python -m img_to_stl projeto demo gerar --resolution 0.3   # etapa 2: gera o STL
@@ -40,11 +41,26 @@ python -m img_to_stl projeto demo reconhecer               # refaz a etapa 1
 python -m img_to_stl projeto demo abrir                    # abre no modo interativo (--interface auxiliar)
 ```
 
+## Região de fundo (etapa 2)
+- Fundo = região **lisa** e **fora da base "silhueta"**. A etapa 1 reconhece o fundo pela cor (`ignore_color`); na etapa 2 você pode escolher outra.
+- Modo interativo: no início da etapa 2, `Região de fundo: ...` → `f` escolhe (número ou nome), `n` nenhuma, `a` volta à reconhecida na etapa 1.
+- Linha de comando: `projeto NOME fundo 3` · `fundo nenhuma` · `fundo auto` ou `--background-regions 3,5`. Parâmetro: `background_regions`.
+- A região escolhida passa a `lisa/0` no `texturas.json`.
+
+## Editar `texturas.json` e regerar o STL
+1. Edite `repositorio/<nome>/etapa2_texturas/texturas.json` (região por nome ou número, `"ondas/3(escala=1.5)"`).
+2. Regere só a etapa 2: `python -m img_to_stl projeto NOME gerar` (ou `--projeto NOME --etapa 2 --auto`, ou menu → 2 → etapa 2).
+- Erro de digitação: o programa diz qual região/linha está errada e **não** mexe no STL anterior.
+- Se a etapa 1 for refeita (ou regiões fundidas), o arquivo antigo vira `texturas.json.antigo` e sai uma nova sugestão.
+
 ## Fundir regiões
 - **Por critério** (sem precisar saber os números):
   - `familia` junta as regiões irmãs (cor parecida) que se tocam; `familia=2` só a família 2.
+  - `parecidas=8` junta vizinhas cuja cor difere menos que 8 (ΔE), as mais parecidas primeiro.
   - `menores=50` manda cada região com menos de 50 mm² para a vizinha de cor mais parecida.
   - `cor=verde,lilas` junta as regiões de cada cor numa só; `cor=verde+lilas` junta as duas cores numa região só.
+- **Limite ajustável:** nos critérios `parecidas` e `menores`, o terminal mostra quantas regiões serão fundidas (ex.: 7 → 6) e a lista dos grupos;
+  `Enter` continua, `l` muda o limite (e recalcula o plano) e `c` cancela. Em `projeto NOME fundir`, a pergunta aparece quando há terminal (`--sim` fundir direto).
 - **Por número ou nome:** `3,7` ou `3 7` (também `03_verde 07_azul`).
 - Onde usar: `f` na etapa 1 do modo interativo (mostra o plano e pede confirmação nos critérios), `--fundir ESPEC` (repetível),
   ou `python -m img_to_stl projeto NOME fundir ESPEC [ESPEC...]`.
@@ -74,6 +90,7 @@ entre pixels (suavizadas, contínuas, sem pontas soltas) → pontos.
   Pontos tríplices/múltiplos só viram relevo se ligados (`model_triple_points`, `model_multiple_points`).
 
 ## Texturas disponíveis
+A lista completa, com os parâmetros de cada uma, fica em **`texturas_disponiveis.txt`** (pasta principal). Para regerar (ex.: com texturas suas): `python -m img_to_stl --list-textures [--texture-dir PASTA]`.
 Todas periódicas em tile de 10 mm (continuam sem emenda entre regiões). `0` (lisa) é sugerida para **uma** região (parâmetro `smooth_region`: `externa` = a maior que toca a borda, `maior`, `nenhuma` ou o nome/número de uma região); em qualquer região você pode escolher `lisa/0`.
 | id | nome | descrição |
 |---|---|---|
@@ -214,6 +231,7 @@ Medidas em mm. Os mesmos nomes valem nos JSON (`parametros.json`, `--config`).
 | `base_mode` | `retangular` | 'retangular' = placa inteira; 'silhueta' = a base segue o contorno das regiões escolhidas (o resto fica de fora). |
 | `base_regions` | `null` | Modo silhueta: ids das regiões que formam a base. null = todas as que não são fundo. |
 | `frame_cord` | `true` | true = cordão também em volta de toda a peça (moldura). |
+| `background_regions` | `null` | Regiões de FUNDO (lisas; fora da base 'silhueta'). null = as reconhecidas na etapa 1 (cor de fundo); lista de nomes ou números = só estas; [] = nenhuma. |
 | `texture_amplitude_mm` | `0.6` | Altura (mm) dos relevos de textura acima da base. |
 | `ridge_profile` | `triangular` | Seção dos traços: 'triangular' (ponta arredondada) ou 'round'. |
 | `apex_round_mm` | `0.1` | Raio (mm) do arredondamento da ponta triangular. 0 = ponta viva. |

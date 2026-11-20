@@ -16,6 +16,7 @@ class Etapa2Config:
     base_mode: str = P.BASE_MODO                       # "retangular" | "silhueta"
     base_regions: Optional[List[int]] = P.BASE_REGIOES
     frame_cord: bool = P.CORDAO_MOLDURA
+    background_regions: Optional[List[Any]] = P.REGIOES_FUNDO   # None = fundo da etapa 1 | nomes/números | [] = nenhum
 
     # --- texturas ---
     texture_amplitude_mm: float = P.AMPLITUDE_TEXTURA_MM
@@ -80,6 +81,7 @@ AJUDA: Dict[str, str] = {
     "base_thickness_mm": "Espessura (mm) da placa lisa sob todo o relevo. Deve ser > 0.",
     "base_mode": "'retangular' = placa inteira; 'silhueta' = a base segue o contorno das regiões escolhidas (o resto fica de fora).",
     "base_regions": "Modo silhueta: ids das regiões que formam a base. null = todas as que não são fundo.",
+    "background_regions": "Regiões de FUNDO (lisas; fora da base 'silhueta'). null = as reconhecidas na etapa 1 (cor de fundo); lista de nomes ou números = só estas; [] = nenhuma.",
     "frame_cord": "true = cordão também em volta de toda a peça (moldura).",
     "texture_amplitude_mm": "Altura (mm) dos relevos de textura acima da base.",
     "ridge_profile": "Seção dos traços: 'triangular' (ponta arredondada) ou 'round'.",

@@ -13,9 +13,41 @@ from .config import Etapa2Config
 from .relevo import HeightField, ReliefBuilder
 from .saida import report_text
 from .stl import HeightfieldMesher, Mesh
-from .texturas_arquivo import load_texture_file, save_texture_file, signature
+from .texturas_arquivo import load_texture_file, save_texture_file, set_entry, signature
 
 TEXTURE_FILE = "texturas.json"
+
+
+def resolve_regions(pmap: PlanarMap, refs) -> Tuple[List[int], List[str]]:
+    """Nomes ou números de região -> (ids, referências que não existem)."""
+    by_name = {r.name: r.id for r in pmap.regions}
+    ids, missing = [], []
+    for ref in refs:
+        t = str(ref).strip()
+        if t in by_name:
+            ids.append(by_name[t])
+        elif t.isdigit() and int(t) < len(pmap.regions):
+            ids.append(int(t))
+        else:
+            missing.append(t)
+    return list(dict.fromkeys(ids)), missing
+
+
+def apply_background(pmap: PlanarMap, cfg: Etapa2Config) -> List[str]:
+    """Marca as regiões de fundo conforme `background_regions` (None = o que a etapa 1 reconheceu).
+    Retorna avisos (referências que não existem mais)."""
+    if not hasattr(pmap, "_fundo_etapa1"):
+        pmap._fundo_etapa1 = [r.ignored for r in pmap.regions]       # guarda o reconhecido na etapa 1
+    warns: List[str] = []
+    if cfg.background_regions is None:
+        flags = pmap._fundo_etapa1
+    else:
+        ids, missing = resolve_regions(pmap, cfg.background_regions)
+        warns = [f"região de fundo '{m}' não existe (a etapa 1 foi refeita?): ignorada" for m in missing]
+        flags = [r.id in ids for r in pmap.regions]
+    for r, f in zip(pmap.regions, flags):
+        r.ignored = bool(f)
+    return warns
 
 
 class Etapa2:
@@ -32,6 +64,27 @@ class Etapa2:
         self.log = log or (lambda msg: None)
         self.warnings: List[str] = []
 
+    # ---- região de fundo ---- #
+    def set_background(self, pmap: PlanarMap, out_dir: str, refs) -> List[int]:
+        """Define o fundo: `refs` = nomes/números de região; [] = nenhum; None = o reconhecido na etapa 1.
+        Se o texturas.json já existe, as regiões de fundo viram `lisa/0` nele. Retorna os ids de fundo."""
+        if refs is None:
+            self.config.background_regions = None
+        else:
+            ids, missing = resolve_regions(pmap, refs)
+            if missing:
+                raise ValueError(f"região inexistente: {missing}. Regiões: {', '.join(r.name for r in pmap.regions)}")
+            self.config.background_regions = [pmap.regions[i].name for i in ids]
+        apply_background(pmap, self.config)
+        ensure(out_dir)
+        self.config.to_json(os.path.join(out_dir, "parametros.json"))     # fica gravado para as próximas execuções
+        path = os.path.join(out_dir, TEXTURE_FILE)
+        fundo = [r.id for r in pmap.regions if r.ignored]
+        if os.path.exists(path):
+            for i in fundo:
+                set_entry(path, pmap.regions[i].name, "lisa/0", pmap, self.config.texture_amplitude_mm)
+        return fundo
+
     # ---- texturas.json ---- #
     def prepare_textures(self, pmap: PlanarMap, out_dir: str,
                          textures_file: Optional[str] = None) -> Tuple[str, Dict[int, TextureAssignment]]:
@@ -39,6 +92,8 @@ class Etapa2:
         Retorna (caminho, atribuição manual lida/sugerida por região)."""
         cfg = self.config
         ensure(out_dir)
+        for w in apply_background(pmap, cfg):
+            self.log(f"[aviso] {w}")
         if cfg.texture_dir:
             TextureLibrary.load_directory(cfg.texture_dir)
         path = textures_file or os.path.join(out_dir, TEXTURE_FILE)

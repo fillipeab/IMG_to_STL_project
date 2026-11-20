@@ -16,12 +16,13 @@ from dataclasses import asdict, fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .comum.arquivos import slug
-from .etapa1_reconhecimento.criterios import parse_fusion, resolve_fusion
+from .etapa1_reconhecimento.criterios import LIMITES, limit_of, parse_fusion, resolve_fusion, with_limit
 from .config import PipelineConfig
 from .etapa1_reconhecimento.config import AJUDA as AJUDA1
 from .etapa2_texturas.biblioteca import TextureLibrary
 from .etapa2_texturas.config import AJUDA as AJUDA2
 from .etapa2_texturas.texturas_arquivo import set_entry
+from .etapa2_texturas.pipeline import apply_background
 from .pipeline import PASTA_ETAPA1, PASTA_ETAPA2, ImageToStl
 
 # Parâmetros agrupados por assunto (o grupo "Avançado" recebe todos os que sobram)
@@ -220,25 +221,56 @@ def show_regions(pmap, out: Callable[[str], None]) -> None:
         out(f"  {r.id:2d}) {r.name:<20} família {r.family:<3}{r.area_mm2:7.0f} mm²" + ("   [fundo]" if r.ignored else ""))
 
 
+def confirm_fusion(pmap, entry, ask, out):
+    """Mostra quantas regiões o critério funde e deixa continuar, mudar o limite ou cancelar.
+    Retorna o item de fusão final (talvez com outro limite) ou None se cancelar."""
+    n = len(pmap.regions)
+    while True:
+        lim = limit_of(entry)
+        try:
+            groups = resolve_fusion(pmap, entry)
+        except ValueError as e:
+            groups = []
+            out(f"  {e}")
+        if groups:
+            merged = sum(len(g) - 1 for g in groups)
+            out(f"  Vai fundir {merged} região(ões) em {len(groups)} grupo(s): {n} → {n - merged} regiões")
+            for g in groups[:8]:
+                out("    " + " + ".join(pmap.regions[i].name for i in g))
+            if len(groups) > 8:
+                out(f"    ... e mais {len(groups) - 8} grupo(s)")
+        opts = (["[Enter] continuar"] if groups else []) \
+            + ([f"[l] mudar o {LIMITES[lim[0]][0]} (atual: {lim[1]:g} {LIMITES[lim[0]][1]})"] if lim else []) \
+            + ["[c] cancelar"]
+        r = ask(" · ".join(opts) + ": ").strip().lower()
+        if r == "c" or (not r and not groups):
+            return None
+        if not r:
+            return entry
+        if r == "l" and lim:
+            raw = ask(f"  Novo {LIMITES[lim[0]][0]} ({LIMITES[lim[0]][1]}): ").strip().replace(",", ".")
+            try:
+                entry = with_limit(entry, float(raw))
+            except ValueError:
+                out(f"  '{raw}' não é um número.")
+
+
 def merge_dialog(app: ImageToStl, proj: str, pmap, ask, out):
     """Fundir regiões a pedido (números/nomes ou critério). Retorna o novo mapa (ou o mesmo, se cancelar)."""
     rule(out, "Fundir regiões")
     show_regions(pmap, out)
     out("")
     out("  Escolha: números ou nomes (ex.: 3 7) · ou um critério:")
-    out("    familia = junta irmãs que se tocam · menores 50 = junta as < 50 mm² na vizinha parecida")
-    out("    cor verde = junta as regiões dessa cor (cor verde lilas = cada cor numa só)")
+    out("    parecidas 8 = junta vizinhas com cor parecida (ΔE < 8) · menores 50 = junta as < 50 mm² na vizinha parecida")
+    out("    familia = junta irmãs que se tocam · cor verde = junta as regiões dessa cor")
     resp = ask("Fundir (Enter = cancelar): ").strip()
     if not resp:
         return pmap
     try:
         entry = parse_fusion(resp, pmap)
-        groups = resolve_fusion(pmap, entry)
-        if isinstance(entry, str):                       # critério: mostra o plano e confirma
-            out("  Vai fundir:")
-            for g in groups:
-                out("    " + " + ".join(pmap.regions[i].name for i in g))
-            if ask("[Enter] confirmar · [c] cancelar: ").strip().lower() == "c":
+        if isinstance(entry, str):                       # critério: mostra o plano e deixa ajustar o limite
+            entry = confirm_fusion(pmap, entry, ask, out)
+            if entry is None:
                 return pmap
         new = app.fundir_regioes(proj, pmap, entry)
     except ValueError as e:
@@ -246,6 +278,30 @@ def merge_dialog(app: ImageToStl, proj: str, pmap, ask, out):
         return pmap
     out(f"  ✓ {len(pmap.regions)} → {len(new.regions)} regiões")
     return new
+
+
+def background_step(e2, pmap, out_dir: str, ask, out) -> None:
+    """Passo opcional da etapa 2: escolher qual região é o FUNDO (lisa e fora da base silhueta)."""
+    apply_background(pmap, e2.config)
+    atual = [r.name for r in pmap.regions if r.ignored]
+    out("")
+    out(f"  Região de fundo: {', '.join(atual) or 'nenhuma'}")
+    if ask("[Enter] manter · [f] escolher a região de fundo: ").strip().lower() != "f":
+        return
+    show_regions(pmap, out)
+    while True:
+        out("")
+        resp = ask("Região de fundo (número ou nome) · [n] nenhuma · [a] a reconhecida na etapa 1 · Enter = manter: ").strip()
+        if not resp:
+            return
+        try:
+            refs = None if resp.lower() == "a" else [] if resp.lower() == "n" else resp.replace(",", " ").split()
+            fundo = e2.set_background(pmap, out_dir, refs)
+        except ValueError as e:
+            out(f"  Não aceito: {e}")
+            continue
+        out(f"  ✓ Fundo: {', '.join(pmap.regions[i].name for i in fundo) or 'nenhuma'}")
+        return
 
 
 def show_catalog(out: Callable[[str], None]) -> None:
@@ -470,6 +526,7 @@ def interactive_session(image_path: Optional[str], app: ImageToStl, proj: Option
 
     e2 = app.etapa2()
     out_dir = os.path.join(proj, PASTA_ETAPA2)
+    background_step(e2, pmap, out_dir, ask, out)
     with _quiet(app):
         e2.log = lambda m: None
         path, _ = e2.prepare_textures(pmap, out_dir)

@@ -37,6 +37,9 @@ TEXTURAS_PADRAO = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 #   "nenhuma": nenhuma região lisa;  ou o NOME/número de uma região (ex.: "00_azul" ou "0").
 # Não se aplica quando já existe região de fundo (ignore_color, já lisa) ou lisa escolhida à mão.
 REGIAO_LISA = "externa"
+# Regiões de FUNDO decididas na etapa 2 (lisas e fora da base "silhueta"). None = as que a etapa 1 reconheceu
+# (cor de fundo). Lista de nomes ou números de região = só estas; [] = nenhuma.
+REGIOES_FUNDO = None
 # Aviso se o menor traço (após distorção) ficar menor que isso. Bico de 0,4 mm não imprime abaixo.
 AVISO_TRACO_MIN_MM = 0.4
 
