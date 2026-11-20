@@ -1,5 +1,5 @@
 TEXTURAS DISPONÍVEIS — img_to_stl
-(gerado por: python -m img_to_stl --list-textures)
+(gerado por: python -m img_to_stl --atualizar-texturas  ou  menu > 3) Texturas > a)
 
 Como usar: no texturas.json, "REGIAO": "nome/id(distorções)" — pelo nome ou pelo número.
   Ex.: "ondas/3"   "3"   "ondas/3(escala=1.5, alongar=2, angulo=30)"   "lisa/0"
@@ -35,4 +35,4 @@ Todas as internas repetem num tile de 10 mm: pitch/célula devem dividir 10.
                      parâmetros: period=5
 
 0 é a textura lisa (sem relevo). Ids >= 100: suas texturas de CAD/PNG (pasta texture_dir, arquivos <id>_<nome>.stl|png);
-elas aparecem aqui quando a lista é gerada com --texture-dir PASTA.
+elas entram nesta lista ao atualizar: menu > 3) Texturas > a, ou --atualizar-texturas [PASTA].

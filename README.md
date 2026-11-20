@@ -90,7 +90,9 @@ entre pixels (suavizadas, contínuas, sem pontas soltas) → pontos.
   Pontos tríplices/múltiplos só viram relevo se ligados (`model_triple_points`, `model_multiple_points`).
 
 ## Texturas disponíveis
-A lista completa, com os parâmetros de cada uma, fica em **`texturas_disponiveis.txt`** (pasta principal). Para regerar (ex.: com texturas suas): `python -m img_to_stl --list-textures [--texture-dir PASTA]`.
+A lista completa, com os parâmetros de cada uma, fica em **`texturas_disponiveis.txt`** (pasta principal). **Atualizar texturas** (releitura da pasta de texturas próprias, conferência de cada arquivo e regravação da lista): no menu inicial, `3) Texturas` (mostra a lista e tem a opção `a` = atualizar),
+ou `python -m img_to_stl --atualizar-texturas [PASTA]` (padrão: a pasta `texturas/`). Arquivos fora do padrão `<id>_<nome>.stl|png` ou ilegíveis viram aviso.
+A pasta usada fica em `texture_dir` e vale nas próximas execuções. `--list-textures` só mostra a lista no terminal.
 Todas periódicas em tile de 10 mm (continuam sem emenda entre regiões). `0` (lisa) é sugerida para **uma** região (parâmetro `smooth_region`: `externa` = a maior que toca a borda, `maior`, `nenhuma` ou o nome/número de uma região); em qualquer região você pode escolher `lisa/0`.
 | id | nome | descrição |
 |---|---|---|

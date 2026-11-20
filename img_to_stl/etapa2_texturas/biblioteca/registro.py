@@ -61,6 +61,8 @@ class TextureLibrary:
     def params_of(cls, texture_id: int) -> List[str]:
         """Parâmetros próprios da textura ("nome=padrão"), para `texture_params`."""
         import inspect
+        if texture_id >= 100:                               # textura de arquivo: sem parâmetros próprios
+            return []
         try:
             sig = inspect.signature(cls._registry[texture_id])
         except (TypeError, ValueError, KeyError):
@@ -75,7 +77,7 @@ class TextureLibrary:
     def catalog_text(cls) -> str:
         """Texto do arquivo `texturas_disponiveis.txt`: lista, parâmetros e como usar."""
         L = ["TEXTURAS DISPONÍVEIS — img_to_stl",
-             "(gerado por: python -m img_to_stl --list-textures)", "",
+             "(gerado por: python -m img_to_stl --atualizar-texturas  ou  menu > 3) Texturas > a)", "",
              "Como usar: no texturas.json, \"REGIAO\": \"nome/id(distorções)\" — pelo nome ou pelo número.",
              "  Ex.: \"ondas/3\"   \"3\"   \"ondas/3(escala=1.5, alongar=2, angulo=30)\"   \"lisa/0\"",
              "Distorções: escala, alongar, angulo, cisalhar, rotacao, desloc_x, desloc_y, onda_amp, onda_comp, amp (altura, mm).",
@@ -88,7 +90,7 @@ class TextureLibrary:
             if params:
                 L.append(f"{'':>21}parâmetros: " + ", ".join(params))
         L += ["", "0 é a textura lisa (sem relevo). Ids >= 100: suas texturas de CAD/PNG (pasta texture_dir, arquivos <id>_<nome>.stl|png);",
-              "elas aparecem aqui quando a lista é gerada com --texture-dir PASTA."]
+              "elas entram nesta lista ao atualizar: menu > 3) Texturas > a, ou --atualizar-texturas [PASTA]."]
         return "\n".join(L) + "\n"
 
     @classmethod
@@ -96,6 +98,13 @@ class TextureLibrary:
         with open(path, "w", encoding="utf-8") as f:
             f.write(cls.catalog_text())
         return path
+
+    @classmethod
+    def clear_custom(cls) -> None:
+        """Esquece as texturas de arquivo (ids >= 100), para reler a pasta do zero."""
+        for tid in [t for t in cls._registry if t >= 100]:
+            for d in (cls._registry, cls._names, cls._descriptions):
+                d.pop(tid, None)
 
     @classmethod
     def describe(cls) -> Dict[int, str]:

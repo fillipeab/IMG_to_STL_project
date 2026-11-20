@@ -179,7 +179,7 @@ def load_directory(directory: str, res: float = 0.05) -> List[int]:
         def factory(path=path, name=name, profile=None, **params):
             return TileTexture.from_file(path, res=params.pop("res", res), name=name)
 
-        TextureLibrary.register_factory(tid, name, factory)
+        TextureLibrary.register_factory(tid, name, factory, f"sua textura (arquivo {fname})")
         ids.append(tid)
     return ids
 

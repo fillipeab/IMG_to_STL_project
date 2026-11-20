@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", help="JSON de configuração completo (etapa1 + etapa2)")
     p.add_argument("--save-config", help="salva a configuração final neste JSON")
     p.add_argument("--list-textures", action="store_true", help="lista as texturas disponíveis e sai")
+    p.add_argument("--atualizar-texturas", nargs="?", const="", metavar="PASTA",
+                   help="relê a pasta de texturas próprias (padrão: a de --texture-dir ou 'texturas'), confere e regrava texturas_disponiveis.txt")
     p.add_argument("--export-textures", metavar="PASTA",
                    help="grava um tile (STL+PNG+JSON) de cada textura interna para editar no CAD e sai")
 
@@ -136,6 +138,13 @@ def main(argv=None) -> int:
         for tid, name, desc in TextureLibrary.catalog():
             print(f"{tid:>3}  {name:<18}{desc}")
         print(f"\n(lista completa, com parâmetros: {TextureLibrary.write_catalog()})")
+        return 0
+    if args.atualizar_texturas is not None:
+        from .etapa2_texturas.biblioteca import update_textures
+        folder = args.atualizar_texturas or args.texture_dir or ("texturas" if os.path.isdir("texturas") else None)
+        update_textures(folder, print)
+        for tid, name, desc in TextureLibrary.catalog():
+            print(f"{tid:>3}  {name:<18}{desc}")
         return 0
     if args.export_textures:
         from .etapa2_texturas.biblioteca import export_texture_templates

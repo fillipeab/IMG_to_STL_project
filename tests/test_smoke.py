@@ -430,6 +430,26 @@ def test_fundo_na_etapa2_e_catalogo_de_texturas(tmp_path=None):
     assert os.path.isfile(here) and open(here, encoding="utf-8").read() == txt   # o arquivo da pasta principal está em dia
 
 
+def test_atualizar_texturas():
+    from img_to_stl.etapa2_texturas.biblioteca import update_textures
+    with tempfile.TemporaryDirectory() as d:
+        pasta = os.path.join(d, "minhas")
+        os.makedirs(pasta)
+        tile = TextureLibrary.create(5).tile(10.0, 0.1)                 # um PNG de tile válido
+        import cv2
+        cv2.imwrite(os.path.join(pasta, "100_meu.png"), (tile * 255).astype(np.uint8))
+        open(os.path.join(pasta, "101_quebrada.png"), "w").write("x")
+        open(os.path.join(pasta, "sem_id.png"), "w").write("x")
+        log = []
+        ids, problemas = update_textures(pasta, log.append, os.path.join(d, "lista.txt"))
+        assert ids == [100] and len(problemas) == 2 and 101 not in TextureLibrary.describe()
+        assert "meu" in open(os.path.join(d, "lista.txt"), encoding="utf-8").read()
+        os.remove(os.path.join(pasta, "100_meu.png"))                   # saiu da pasta: some da lista
+        ids, _ = update_textures(pasta, log.append, os.path.join(d, "lista.txt"))
+        assert ids == [] and 100 not in TextureLibrary.describe()
+        update_textures(None, log.append, os.path.join(d, "lista.txt"))
+
+
 def test_editar_texturas_json_e_regerar():
     from img_to_stl.cli_projeto import main as projeto_main
     from img_to_stl.cli import main as cli_main
@@ -535,7 +555,8 @@ def test_cli_automatico_menu_e_repositorio():
             "", "", "", "", "", "",                 # tudo com padrões
             "2", "2", "2",                          # operar em existente: lista, escolhe #2 (outra) -> etapa 2
             "", "", "", "",                         # parâmetros, fundo, texturas, gerar
-            "3", "0",                               # troca de interface e sai
+            "3", "x", "l", "a", "", "",             # menu Texturas: comando inválido, lista, atualizar (pasta padrão), voltar
+            "4", "0",                               # troca de interface e sai
         ])
         log = []
         main_menu(app, ask=lambda m: next(respostas), out=log.append)
@@ -545,7 +566,7 @@ def test_cli_automatico_menu_e_repositorio():
         assert {"cli", "outra", "outra_v2"} <= set(app.list_projects())
         assert os.path.isfile(os.path.join(saidas, "outra.stl"))
         assert cfg.etapa1.max_regions == 8
-        assert "Parâmetros principais" in txt
+        assert "Parâmetros principais" in txt and "Lista gravada em" in txt and "Comando não reconhecido: 'x'" in txt
         assert "Interface: auxiliar (versão 2)" in txt
 
 

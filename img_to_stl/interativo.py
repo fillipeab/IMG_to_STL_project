@@ -398,6 +398,38 @@ def _status_text(st: Dict[str, bool]) -> str:
     return f"etapa 1 {mark(st['etapa1'])}   etapa 2 {mark(st['etapa2'])}   STL {mark(st['stl'])}"
 
 
+def update_textures_dialog(app: ImageToStl, ask, out) -> None:
+    """Menu: relê a pasta de texturas próprias e regrava texturas_disponiveis.txt."""
+    from .etapa2_texturas.biblioteca import update_textures
+    rule(out, "Atualizar texturas")
+    e2 = app.config.etapa2
+    default = e2.texture_dir or ("texturas" if os.path.isdir("texturas") else "")
+    folder = ask(f"Pasta das suas texturas (Enter = {default or 'só as internas'}): ").strip() or default
+    out("")
+    ids, _ = update_textures(folder or None, out)
+    if ids:
+        e2.texture_dir = folder                        # as próximas execuções já usam estas texturas
+    show_catalog(out)
+
+
+def textures_menu(app: ImageToStl, ask, out) -> None:
+    """Menu "Texturas": mostra a lista e permite atualizá-la (reler a pasta das suas texturas)."""
+    rule(out, "Texturas")
+    show_catalog(out)
+    out(f"  Lista completa, com parâmetros: texturas_disponiveis.txt")
+    while True:
+        out("")
+        r = ask("[a] atualizar (reler a pasta das suas texturas) · [l] ver a lista de novo · Enter = voltar: ").strip().lower()
+        if not r:
+            return
+        if r == "a":
+            update_textures_dialog(app, ask, out)
+        elif r == "l":
+            show_catalog(out)
+        else:
+            out(f"  Comando não reconhecido: '{r}'. Use a, l ou Enter.")
+
+
 def interface_name(params_step) -> str:
     return "principal" if params_step is params_principal else "auxiliar (versão 2)"
 
@@ -413,7 +445,8 @@ def main_menu(app: ImageToStl, ask: Callable[[str], str] = input, out: Callable[
         out("")
         out("  1) Importar nova imagem")
         out("  2) Operar em uma imagem já existente")
-        out(f"  3) Trocar de interface (atual: {interface_name(step)})")
+        out("  3) Texturas (ver a lista e atualizar)")
+        out(f"  4) Trocar de interface (atual: {interface_name(step)})")
         out("  0) Sair")
         out("")
         r = ask("Escolha: ").strip()
@@ -430,6 +463,8 @@ def main_menu(app: ImageToStl, ask: Callable[[str], str] = input, out: Callable[
         elif r == "2":
             _open_existing(app, ask, out, step)
         elif r == "3":
+            textures_menu(app, ask, out)
+        elif r == "4":
             step = cli_auxiliar.params_abas if step is params_principal else params_principal
             out(f"\n  Interface: {interface_name(step)}")
 
