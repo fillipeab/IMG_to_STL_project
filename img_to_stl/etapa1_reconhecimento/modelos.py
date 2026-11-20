@@ -97,6 +97,20 @@ class PlanarMap:
     def region(self, region_id: int) -> Region:
         return self.regions[region_id]
 
+    def adjacency(self) -> Dict[int, set]:
+        """Regiões que se tocam (pixels vizinhos com rótulos diferentes): {id: {ids vizinhos}}."""
+        lab = self.labels
+        pairs = set()
+        for a, b in ((lab[:, :-1], lab[:, 1:]), (lab[:-1, :], lab[1:, :])):
+            m = a != b
+            lo, hi = np.minimum(a[m], b[m]), np.maximum(a[m], b[m])
+            pairs.update(zip(lo.tolist(), hi.tolist()))
+        adj: Dict[int, set] = {r.id: set() for r in self.regions}
+        for x, y in pairs:
+            adj[x].add(y)
+            adj[y].add(x)
+        return adj
+
     def points_of(self, classe: str) -> List[InterestPoint]:
         return [p for p in self.points if p.classe == classe]
 

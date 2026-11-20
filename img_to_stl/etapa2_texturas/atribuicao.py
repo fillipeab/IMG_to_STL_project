@@ -35,17 +35,7 @@ class TextureAssigner:
     @staticmethod
     def adjacency(pmap: PlanarMap) -> Dict[int, set]:
         """Regiões que se tocam (pixels vizinhos com rótulos diferentes)."""
-        lab = pmap.labels
-        pairs = set()
-        for a, b in ((lab[:, :-1], lab[:, 1:]), (lab[:-1, :], lab[1:, :])):
-            m = a != b
-            lo, hi = np.minimum(a[m], b[m]), np.maximum(a[m], b[m])
-            pairs.update(zip(lo.tolist(), hi.tolist()))
-        adj: Dict[int, set] = {r.id: set() for r in pmap.regions}
-        for x, y in pairs:
-            adj[x].add(y)
-            adj[y].add(x)
-        return adj
+        return pmap.adjacency()
 
     def smooth_region_id(self, pmap: PlanarMap, candidates: List[int], has_smooth: bool) -> Optional[int]:
         """Região que fica lisa na sugestão (ver `smooth_region`); None = nenhuma."""

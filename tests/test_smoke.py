@@ -328,8 +328,63 @@ def test_fundir_regioes():
             except ValueError:
                 continue
             raise AssertionError(bad)
-        from img_to_stl.interativo import parse_regions
-        assert parse_regions("1, 2 " + new.regions[3].name, new) == [1, 2, 3]
+        from img_to_stl.etapa1_reconhecimento.criterios import parse_fusion
+        assert parse_fusion("1, 2 " + new.regions[3].name, new) == [1, 2, 3]
+
+
+def test_fusao_por_criterio():
+    from img_to_stl.etapa1_reconhecimento.criterios import parse_fusion, resolve_fusion
+    with tempfile.TemporaryDirectory() as d:
+        pm = ImageReader(Etapa1Config()).read(_demo(d))
+        assert parse_fusion("menores 100") == "menores=100" and parse_fusion("cor verde lilas") == "cor=verde,lilas"
+        assert parse_fusion("familia") == "familia" and parse_fusion("3,7") == [3, 7]
+        small = [r.id for r in pm.regions if r.area_mm2 < 100]
+        groups = resolve_fusion(pm, "menores=100")
+        assert small and all(set(small) <= set(g) or not set(small) & set(g) for g in groups)
+        assert sum(len(g) - 1 for g in groups) == len(small)        # cada pequena some numa vizinha
+        assert len(ImageReader(Etapa1Config()).apply_fusion(pm, "menores=100").regions) == len(pm.regions) - len(small)
+        # cor: usa o nome da cor das regiões
+        a, b = pm.regions[0], pm.regions[1]
+        assert resolve_fusion(pm, f"cor={a.color_name.split()[0]}+{b.color_name.split()[0]}")[0][:2] == [0, 1]
+        for bad in ("familia=zzz", "cor=azulbebe", "menores=0.001", "xyz"):
+            try:
+                resolve_fusion(pm, bad)
+            except ValueError:
+                continue
+            raise AssertionError(bad)
+        # repetição fiel pela configuração: criterio guardado em merge_regions
+        cfg = Etapa1Config(merge_regions=["menores=100", [0, 1]])
+        n = len(ImageReader(cfg).read(_demo(d)).regions)
+        assert n == len(pm.regions) - len(small) - 1
+
+
+def test_cli_por_objeto_e_interface_auxiliar():
+    from img_to_stl.cli import main as cli_main
+    from img_to_stl.cli_projeto import main as projeto_main
+    from img_to_stl.cli_auxiliar import main_menu as menu_aux
+    with tempfile.TemporaryDirectory() as d:
+        repo, saidas = os.path.join(d, "repositorio"), os.path.join(d, "saidas")
+        img = _demo(d, "obj.png")
+        assert cli_main([img, "--etapa", "1", "--auto", "-o", repo, "--saidas", saidas, "--no-negatives"]) == 0
+        log = []
+        run = lambda *a: projeto_main(["projeto", "obj", *a, "-o", repo, "--saidas", saidas, "--resolution", "0.5"], out=log.append)
+        assert projeto_main(["projetos", "-o", repo], out=log.append) == 0 and "obj" in log[-1]
+        assert run("regioes") == 0 and "00_" in log[-1] or "06_" in "\n".join(log)
+        assert run("fundir", "menores=100", "cor=laranja+rosa") == 0 and any("✓" in m for m in log)
+        assert run("fundir", "9,10") == 2 and "inexistente" in log[-1]       # erro claro, sem quebrar
+        assert run("textura", "1=ondas/3(1.5)") == 0
+        assert run("gerar") == 0 and os.path.isfile(os.path.join(saidas, "obj.stl"))
+        assert projeto_main(["projeto", "nada", "ver", "-o", repo], out=log.append) == 2
+        # interface auxiliar: parâmetros em abas
+        cfg = _fast_cfg(0.5, d)
+        cfg.base_dir, cfg.stl_dir = repo, saidas
+        app = ImageToStl(cfg)
+        respostas = iter(["2", "1", "2",                  # operar em existente > #1 > etapa 2
+                          "a", "1", "2", "1.5", "", "",   # ajustar > grupo 1 > base_thickness_mm = 1.5 > voltar > pronto
+                          "", "", "0"])                   # texturas, gerar, sair
+        log = []
+        menu_aux(app, ask=lambda m: next(respostas), out=log.append)
+        assert cfg.etapa2.base_thickness_mm == 1.5 and "Grupos de parâmetros" in "\n".join(log)
 
 
 def test_pontos_triplices_so_viram_relevo_se_ligados():
@@ -404,16 +459,16 @@ def test_cli_automatico_menu_e_repositorio():
         novo = _demo(d, "outra.png")
         respostas = iter([
             "1", novo,                              # importar nova imagem
-            "a", "1", "2", "8", "", "",             # etapa 1: ajustar > grupo 1 > max_regions = 8 > voltar > pronto
+            "2", "8", "",                           # etapa 1: parâmetro 2 (max_regions) = 8 > continuar
             "",                                     # seguir para a etapa 2
-            "",                                     # parâmetros da etapa 2: usar atuais
+            "",                                     # parâmetros da etapa 2: continuar
             "1", "escamas/4", "",                   # região 1 > textura > aceitar
             "",                                     # gerar agora
             "1", novo, "n", "outra_v2",             # importa de novo: conflito -> novo nome
-            "", "", "", "", "", "",                 # tudo com padrões (inclui o passo de gerar)
+            "", "", "", "", "",                     # tudo com padrões
             "2", "2", "2",                          # operar em existente: lista, escolhe #2 (outra) -> etapa 2
             "", "", "",                             # parâmetros, texturas, gerar
-            "0",                                    # sair
+            "3", "0",                               # troca de interface e sai
         ])
         log = []
         main_menu(app, ask=lambda m: next(respostas), out=log.append)
@@ -423,6 +478,8 @@ def test_cli_automatico_menu_e_repositorio():
         assert {"cli", "outra", "outra_v2"} <= set(app.list_projects())
         assert os.path.isfile(os.path.join(saidas, "outra.stl"))
         assert cfg.etapa1.max_regions == 8
+        assert "Parâmetros principais" in txt
+        assert "Interface: auxiliar (versão 2)" in txt
 
 
 if __name__ == "__main__":

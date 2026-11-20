@@ -1,5 +1,9 @@
 """Interface interativa no terminal, em passos curtos: uma pergunta por vez.
 
+Principal (esta): cada etapa abre mostrando só os parâmetros principais; `p` mostra/altera todos, por grupo.
+Auxiliar (cli_auxiliar.py, "versão 2"): os parâmetros ficam em abas (grupos) que se abrem uma a uma.
+As duas dividem o resto do fluxo (menu, fusão, texturas, STL); muda só o passo "parâmetros".
+
 Todas as perguntas passam por `ask` (padrão: input) e as mensagens por `out` (padrão: print),
 o que permite testar com respostas prontas.
 """
@@ -12,6 +16,7 @@ from dataclasses import asdict, fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .comum.arquivos import slug
+from .etapa1_reconhecimento.criterios import parse_fusion, resolve_fusion
 from .config import PipelineConfig
 from .etapa1_reconhecimento.config import AJUDA as AJUDA1
 from .etapa2_texturas.biblioteca import TextureLibrary
@@ -32,6 +37,9 @@ GRUPOS2: List[Tuple[str, List[str]]] = [
     ("Cordão das fronteiras", ["border_width_mm", "border_height_mm", "border_exclusion_mm"]),
     ("Pontos", ["point_shape", "point_size_mm", "point_height_mm", "model_triple_points", "model_multiple_points"]),
 ]
+# Os poucos parâmetros que aparecem logo ao abrir cada etapa
+PRINCIPAIS1 = ["width_mm", "max_regions", "color_tolerance", "ignore_color"]
+PRINCIPAIS2 = ["resolution_mm", "base_thickness_mm", "base_mode", "texture_amplitude_mm", "smooth_region"]
 ROTULOS = {
     "width_mm": "Largura da peça (mm)", "max_regions": "Máximo de regiões", "color_tolerance": "Tolerância de cor (ΔE)",
     "min_region_area_mm2": "Área mínima de região (mm²)", "min_region_thickness_mm": "Espessura mínima de região (mm)",
@@ -47,6 +55,20 @@ ROTULOS = {
     "border_width_mm": "Largura do cordão (mm)", "border_height_mm": "Altura do cordão (mm)",
     "border_exclusion_mm": "Faixa livre junto ao cordão (mm)", "point_shape": "Forma dos pontos",
     "point_size_mm": "Tamanho dos pontos (mm)", "point_height_mm": "Altura dos pontos (mm)",
+    # avançados (etapa 1)
+    "work_max_px": "Resolução de trabalho (px)", "denoise_iterations": "Passadas do filtro de ruído",
+    "denoise_sigma_color": "Filtro: tolerância de cor", "denoise_sigma_space": "Filtro: vizinhança (px)",
+    "n_color_clusters": "Cores iniciais (k-means)", "simplify_tol_mm": "Simplificação das curvas (mm)",
+    "triple_min_regions": "Regiões mínimas num ponto tríplice", "triple_merge_dist_mm": "Distância p/ unir tríplices (mm)",
+    "marker_max_area_mm2": "Área máxima de um marcador (mm²)", "negatives_px_per_mm": "Negativos: pixels por mm",
+    "negatives_line_mm": "Negativos: espessura da linha (mm)", "negatives_point_radius_mm": "Negativos: raio dos pontos (mm)",
+    "random_seed": "Semente aleatória",
+    # avançados (etapa 2)
+    "ridge_profile": "Perfil dos traços", "apex_round_mm": "Arredondamento da ponta (mm)",
+    "min_feature_warn_mm": "Aviso de traço mínimo (mm)", "texture_params": "Parâmetros próprios das texturas",
+    "border_semicircle": "Cordão semicircular", "exclusion_fade_mm": "Rampa da faixa livre (mm)",
+    "exclusion_texture_height_factor": "Altura da textura na faixa livre", "point_flank_mm": "Rampa dos pontos (mm)",
+    "point_exclusion_mm": "Faixa livre em volta do ponto (mm)", "point_shape_by_class": "Forma dos pontos por classe",
     "model_triple_points": "Modelar pontos tríplices", "model_multiple_points": "Modelar pontos múltiplos",
 }
 LARGURA = 60
@@ -102,20 +124,41 @@ def _explain(cfg, key: str, notes: Dict[str, str], out: Callable[[str], None]) -
 
 
 def edit_params(cfg, keys: List[str], notes: Dict[str, str], ask: Callable[[str], str],
-                out: Callable[[str], None]) -> None:
-    """Lista curta de parâmetros (um grupo). Número altera, ?número explica, Enter volta."""
-    while True:
+                out: Callable[[str], None], headers: Optional[Dict[int, str]] = None,
+                extras: Optional[Dict[str, Tuple[str, Callable[[], None]]]] = None,
+                exit_label: str = "voltar", reprint: bool = True) -> None:
+    """Lista numerada de parâmetros. Número altera, ?<número> explica, Enter sai.
+    `headers`: {posição: título do grupo}; `extras`: {letra: (texto, função)}; `reprint=False` só relista com 'l'."""
+    headers, extras = headers or {}, extras or {}
+
+    def show() -> None:
         out("")
         for i, k in enumerate(keys, 1):
-            out(f"  {i}) {ROTULOS.get(k, k):<34}{fmt(getattr(cfg, k))}")
+            if i - 1 in headers:
+                out(f"  ── {headers[i - 1]}")
+            out(f"  {i:2d}) {ROTULOS.get(k, k):<36}{fmt(getattr(cfg, k))}")
+
+    show()
+    while True:
         out("")
-        resp = ask("Número = alterar · ?número = explicação · Enter = voltar: ").strip()
+        parts = ["número = alterar", "?<número> = explicar"] + [f"{k} = {d}" for k, (d, _) in extras.items()]
+        if not reprint:
+            parts.append("l = listar de novo")
+        resp = ask(" · ".join(parts) + f" · Enter = {exit_label}: ").strip()
         if not resp:
             return
+        if resp.lower() in extras:
+            extras[resp.lower()][1]()
+            if reprint:
+                show()
+            continue
+        if resp.lower() == "l" and not reprint:
+            show()
+            continue
         explain = resp.startswith("?")
-        num = resp[1:].strip() if explain else resp
+        num = resp[1:].strip().strip("<>") if explain else resp
         if not num.isdigit() or not (1 <= int(num) <= len(keys)):
-            out(f"  Comando não reconhecido: '{resp}'. Use um número de 1 a {len(keys)}, ?número ou Enter.")
+            out(f"  Comando não reconhecido: '{resp}'. Use um número de 1 a {len(keys)}, ?<número> ou Enter.")
             continue
         key = keys[int(num) - 1]
         out("")
@@ -123,40 +166,41 @@ def edit_params(cfg, keys: List[str], notes: Dict[str, str], ask: Callable[[str]
         if explain:
             continue
         raw = ask("  Novo valor (Enter = manter · 'nenhum' = vazio): ")
-        if not raw.strip():
-            continue
-        old = getattr(cfg, key)
-        try:
-            setattr(cfg, key, parse_value(raw, old))
-            if hasattr(cfg, "validate"):
-                cfg.validate()
-        except (ValueError, TypeError) as e:
-            setattr(cfg, key, old)
-            out(f"  Valor inválido: {e}")
+        if raw.strip():
+            old = getattr(cfg, key)
+            try:
+                setattr(cfg, key, parse_value(raw, old))
+                if hasattr(cfg, "validate"):
+                    cfg.validate()
+                out(f"  ✓ {ROTULOS.get(key, key)} = {fmt(getattr(cfg, key))}")
+            except (ValueError, TypeError) as e:
+                setattr(cfg, key, old)
+                out(f"  Valor inválido: {e}")
+        if reprint:
+            show()
 
 
-def choose_params(cfg, groups: List[Tuple[str, List[str]]], notes: Dict[str, str], ask, out) -> None:
-    """Passo "Parâmetros": usar os atuais (Enter) ou ajustar por grupo."""
-    r = ask("Parâmetros: [Enter] usar os valores atuais · [a] ajustar: ").strip().lower()
-    if r != "a":
-        return
+def all_groups(cfg, groups: List[Tuple[str, List[str]]]) -> List[Tuple[str, List[str]]]:
+    """Os grupos + "Avançado" com tudo o que não coube neles."""
     used = {k for _, ks in groups for k in ks}
     rest = [f.name for f in fields(cfg) if f.name not in used]
-    groups = groups + ([("Avançado", rest)] if rest else [])
-    while True:
-        rule(out, "Grupos de parâmetros")
-        for i, (title, _) in enumerate(groups, 1):
-            out(f"  {i}) {title}")
-        out("")
-        g = ask("Grupo (número) · Enter = pronto: ").strip()
-        if not g:
-            return
-        if not g.isdigit() or not (1 <= int(g) <= len(groups)):
-            out(f"  Escolha de 1 a {len(groups)}, ou Enter.")
-            continue
-        title, keys = groups[int(g) - 1]
-        rule(out, title)
-        edit_params(cfg, keys, notes, ask, out)
+    return groups + ([("Avançado", rest)] if rest else [])
+
+
+def params_principal(cfg, groups, principais, notes, ask, out) -> None:
+    """Passo "parâmetros" da interface principal: só os principais; `p` abre a lista completa por grupo."""
+    def full() -> None:
+        keys, headers = [], {}
+        for title, ks in all_groups(cfg, groups):
+            headers[len(keys)] = title
+            keys += ks
+        rule(out, "Todos os parâmetros")
+        edit_params(cfg, keys, notes, ask, out, headers=headers, exit_label="voltar", reprint=False)
+        rule(out, "Parâmetros principais")
+
+    out("  Parâmetros principais")
+    edit_params(cfg, principais, notes, ask, out, extras={"p": ("ver/alterar todos", full)},
+                exit_label="continuar")
 
 
 # --------------------------------------------------------------------------- #
@@ -176,35 +220,31 @@ def show_regions(pmap, out: Callable[[str], None]) -> None:
         out(f"  {r.id:2d}) {r.name:<20} família {r.family:<3}{r.area_mm2:7.0f} mm²" + ("   [fundo]" if r.ignored else ""))
 
 
-def parse_regions(text: str, pmap) -> List[int]:
-    """'3 7', '3,7' ou nomes ('03_verde 07_azul') -> ids das regiões."""
-    by_name = {r.name: r.id for r in pmap.regions}
-    ids = []
-    for tok in text.replace(",", " ").split():
-        if tok.isdigit():
-            ids.append(int(tok))
-        elif tok in by_name:
-            ids.append(by_name[tok])
-        else:
-            raise ValueError(f"'{tok}' não é número nem nome de região")
-    return ids
-
-
 def merge_dialog(app: ImageToStl, proj: str, pmap, ask, out):
-    """Fundir regiões a pedido. Retorna o novo mapa (ou o mesmo, se cancelar/errar)."""
+    """Fundir regiões a pedido (números/nomes ou critério). Retorna o novo mapa (ou o mesmo, se cancelar)."""
     rule(out, "Fundir regiões")
     show_regions(pmap, out)
     out("")
-    resp = ask("Regiões a fundir (números ou nomes, ex.: 3 7) · Enter = cancelar: ").strip()
+    out("  Escolha: números ou nomes (ex.: 3 7) · ou um critério:")
+    out("    familia = junta irmãs que se tocam · menores 50 = junta as < 50 mm² na vizinha parecida")
+    out("    cor verde = junta as regiões dessa cor (cor verde lilas = cada cor numa só)")
+    resp = ask("Fundir (Enter = cancelar): ").strip()
     if not resp:
         return pmap
     try:
-        group = parse_regions(resp, pmap)
-        new = app.fundir_regioes(proj, pmap, group)
+        entry = parse_fusion(resp, pmap)
+        groups = resolve_fusion(pmap, entry)
+        if isinstance(entry, str):                       # critério: mostra o plano e confirma
+            out("  Vai fundir:")
+            for g in groups:
+                out("    " + " + ".join(pmap.regions[i].name for i in g))
+            if ask("[Enter] confirmar · [c] cancelar: ").strip().lower() == "c":
+                return pmap
+        new = app.fundir_regioes(proj, pmap, entry)
     except ValueError as e:
         out(f"  Não foi possível fundir: {e}")
         return pmap
-    out(f"  ✓ fundidas: {' + '.join(pmap.regions[i].name for i in dict.fromkeys(group))}")
+    out(f"  ✓ {len(pmap.regions)} → {len(new.regions)} regiões")
     return new
 
 
@@ -302,14 +342,22 @@ def _status_text(st: Dict[str, bool]) -> str:
     return f"etapa 1 {mark(st['etapa1'])}   etapa 2 {mark(st['etapa2'])}   STL {mark(st['stl'])}"
 
 
-def main_menu(app: ImageToStl, ask: Callable[[str], str] = input, out: Callable[[str], None] = print) -> bool:
+def interface_name(params_step) -> str:
+    return "principal" if params_step is params_principal else "auxiliar (versão 2)"
+
+
+def main_menu(app: ImageToStl, ask: Callable[[str], str] = input, out: Callable[[str], None] = print,
+              params_step=None) -> bool:
     """Menu inicial. Cada escolha roda uma sessão e volta ao menu. Retorna False ao sair."""
+    from . import cli_auxiliar                          # import tardio (cli_auxiliar importa este módulo)
+    step = params_step or params_principal
     while True:
         rule(out, "img_to_stl")
         out(f"  repositório: {app.config.base_dir}/    STL: {app.config.stl_dir}/")
         out("")
         out("  1) Importar nova imagem")
         out("  2) Operar em uma imagem já existente")
+        out(f"  3) Trocar de interface (atual: {interface_name(step)})")
         out("  0) Sair")
         out("")
         r = ask("Escolha: ").strip()
@@ -322,12 +370,15 @@ def main_menu(app: ImageToStl, ask: Callable[[str], str] = input, out: Callable[
             name = choose_project_name(app, image, ask, out)
             if name is None:
                 continue
-            interactive_session(image, app, proj=app.project_dir(name), ask=ask, out=out)
+            interactive_session(image, app, proj=app.project_dir(name), ask=ask, out=out, params_step=step)
         elif r == "2":
-            _open_existing(app, ask, out)
+            _open_existing(app, ask, out, step)
+        elif r == "3":
+            step = cli_auxiliar.params_abas if step is params_principal else params_principal
+            out(f"\n  Interface: {interface_name(step)}")
 
 
-def _open_existing(app: ImageToStl, ask, out) -> None:
+def _open_existing(app: ImageToStl, ask, out, params_step=None) -> None:
     projects = app.list_projects()
     if not projects:
         out("\n  O repositório está vazio. Importe uma imagem primeiro (opção 1).")
@@ -350,10 +401,10 @@ def _open_existing(app: ImageToStl, ask, out) -> None:
     a = ask("Escolha: ").strip()
     if a == "1":
         app.load_params(proj)
-        interactive_session(app.original_image(proj), app, proj=proj, ask=ask, out=out)
+        interactive_session(app.original_image(proj), app, proj=proj, ask=ask, out=out, params_step=params_step)
     elif a == "2" and st["etapa1"]:
         app.load_params(proj)
-        interactive_session(None, app, proj=proj, ask=ask, out=out, start_stage=2)
+        interactive_session(None, app, proj=proj, ask=ask, out=out, start_stage=2, params_step=params_step)
 
 
 # --------------------------------------------------------------------------- #
@@ -378,16 +429,17 @@ def _warnings_line(captured: List[str], where: str, out: Callable[[str], None]) 
 
 def interactive_session(image_path: Optional[str], app: ImageToStl, proj: Optional[str] = None,
                         ask: Callable[[str], str] = input, out: Callable[[str], None] = print,
-                        start_stage: int = 1) -> Optional[str]:
+                        start_stage: int = 1, params_step=None) -> Optional[str]:
     """Etapa 1 -> (ajustes) -> etapa 2 -> (ajustes) -> STL. Retorna o caminho do STL (ou None se parou antes)."""
     cfg: PipelineConfig = app.config
+    step = params_step or params_principal
     proj = proj or app.project_dir(image_path)
     name = os.path.basename(os.path.normpath(proj))
 
     if start_stage == 1:
         rule(out, f"Etapa 1 · reconhecimento · {name}")
         while True:
-            choose_params(cfg.etapa1, GRUPOS1, AJUDA1, ask, out)
+            step(cfg.etapa1, GRUPOS1, PRINCIPAIS1, AJUDA1, ask, out)
             out("\n  Processando a imagem...")
             with _quiet(app) as captured:
                 pmap = app.run_etapa1(image_path, proj)
@@ -414,7 +466,7 @@ def interactive_session(image_path: Optional[str], app: ImageToStl, proj: Option
         pmap = app.load_etapa1(proj)
 
     rule(out, f"Etapa 2 · textura e STL · {name}")
-    choose_params(cfg.etapa2, GRUPOS2, AJUDA2, ask, out)
+    step(cfg.etapa2, GRUPOS2, PRINCIPAIS2, AJUDA2, ask, out)
 
     e2 = app.etapa2()
     out_dir = os.path.join(proj, PASTA_ETAPA2)

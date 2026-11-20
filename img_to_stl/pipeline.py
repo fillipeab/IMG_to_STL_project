@@ -113,13 +113,14 @@ class ImageToStl:
         self._write_identification(proj, image_path, pmap)
         return pmap
 
-    def fundir_regioes(self, proj: str, pmap: PlanarMap, group: List[int]) -> PlanarMap:
-        """Funde as regiões `group` do resultado atual, regrava a etapa 1 e guarda a fusão em `merge_regions`
-        (assim refazer a etapa 1 com os mesmos parâmetros repete a fusão)."""
+    def fundir_regioes(self, proj: str, pmap: PlanarMap, entry) -> PlanarMap:
+        """Funde regiões e regrava a etapa 1. `entry`: lista de números ([3, 7]) ou critério
+        ("familia", "menores=50", "cor=verde"). Fica guardado em `merge_regions`: refazer a etapa 1
+        com os mesmos parâmetros repete a fusão."""
         cfg1 = self.config.etapa1
         reader = ImageReader(cfg1)
-        new = reader.merge(pmap, list(group))
-        cfg1.merge_regions.append([int(i) for i in group])
+        new = reader.apply_fusion(pmap, entry)                  # ValueError se não houver o que fundir
+        cfg1.merge_regions.append([int(i) for i in entry] if not isinstance(entry, str) else entry)
         save_stage1(new, cfg1, os.path.join(proj, PASTA_ETAPA1), reader.warnings, self.config.negatives)
         return new
 

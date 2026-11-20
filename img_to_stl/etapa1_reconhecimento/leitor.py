@@ -22,6 +22,7 @@ from scipy.spatial import cKDTree
 
 from ..comum.arquivos import slug
 from .config import Etapa1Config
+from .criterios import resolve_fusion
 from .cores import color_name, group_families, rgb_to_lab
 from .fronteiras import BorderTracer, Chain, contract_short
 from .fusao import RegionGraph
@@ -59,47 +60,73 @@ class ImageReader:
         chains = self._build_borders(pmap)
         self._name_borders(pmap)
         pmap.points = self._build_points(pmap, chains, markers, (w0, h0), (w, h))
-        for group in self.cfg.merge_regions:                    # fusões pedidas (em ordem)
-            pmap = self.merge(pmap, group)
+        for entry in self.cfg.merge_regions:                    # fusões pedidas (em ordem)
+            try:
+                pmap = self.apply_fusion(pmap, entry)
+            except ValueError as e:                             # parâmetros mudaram: não derruba a etapa 1
+                self.warnings.append(f"fusão {entry!r} ignorada: {e}")
         return pmap
 
     # ---- fusão escolhida pelo usuário ---- #
+    def apply_fusion(self, pmap: PlanarMap, entry) -> PlanarMap:
+        """`entry`: lista de números de região ou critério ("familia", "menores=50", "cor=verde")."""
+        return self.merge_groups(pmap, resolve_fusion(pmap, entry))
+
     def merge(self, pmap: PlanarMap, group: List[int]) -> PlanarMap:
-        """Funde as regiões `group` (ids) numa só e refaz nomes, famílias, fronteiras e pontos tríplices.
+        return self.merge_groups(pmap, [group])
+
+    def merge_groups(self, pmap: PlanarMap, groups: List[List[int]]) -> PlanarMap:
+        """Funde cada grupo de regiões (ids) numa só e refaz nomes, famílias, fronteiras e pontos tríplices.
         Pontos de interesse (marcadores/arquivo) são mantidos. Retorna um novo PlanarMap."""
         n = len(pmap.regions)
-        ids = list(dict.fromkeys(int(i) for i in group))
-        bad = [i for i in ids if not 0 <= i < n]
-        if bad:
-            raise ValueError(f"região inexistente: {bad} (há {n} regiões, de 0 a {n - 1})")
-        if len(ids) < 2:
-            raise ValueError("informe pelo menos 2 regiões diferentes para fundir")
-        old = pmap.regions
-        if ndimage.label(np.isin(pmap.labels, ids))[1] > 1:
-            self.warnings.append(f"fusão {ids}: as regiões não se tocam; a região fundida terá partes separadas")
+        parent = list(range(n))
 
-        # regiões novas: as não fundidas + a fundida (soma de áreas, cor e centroide ponderados)
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        for group in groups:
+            ids = list(dict.fromkeys(int(i) for i in group))
+            bad = [i for i in ids if not 0 <= i < n]
+            if bad:
+                raise ValueError(f"região inexistente: {bad} (há {n} regiões, de 0 a {n - 1})")
+            if len(ids) < 2:
+                raise ValueError("informe pelo menos 2 regiões diferentes para fundir")
+            for i in ids[1:]:
+                parent[find(i)] = find(ids[0])
+        comps: dict = {}
+        for i in range(n):
+            comps.setdefault(find(i), []).append(i)
+
+        old = pmap.regions
         area = np.array([r.area_mm2 for r in old])
-        m = np.array(ids)
-        w = area[m] / area[m].sum()
-        merged = Region(
-            id=-1, area_mm2=float(area[m].sum()),
-            color_rgb=tuple(int(round(c)) for c in (np.array([old[i].color_rgb for i in ids]) * w[:, None]).sum(0)),
-            centroid_mm=tuple(float(c) for c in (np.array([old[i].centroid_mm for i in ids]) * w[:, None]).sum(0)),
-            touches_frame=any(old[i].touches_frame for i in ids),
-            ignored=old[ids[int(np.argmax(area[m]))]].ignored)
-        merged.color_name = color_name(merged.color_rgb)
-        items = [(i, old[i]) for i in range(n) if i not in ids] + [(ids[0], merged)]
-        items.sort(key=lambda t: -t[1].area_mm2)               # região 0 = a maior
+        items = []                                              # (menor id do grupo, Region nova)
+        for members in comps.values():
+            if len(members) == 1:
+                items.append((members[0], old[members[0]]))
+                continue
+            if ndimage.label(np.isin(pmap.labels, members))[1] > 1:
+                self.warnings.append(f"fusão {members}: as regiões não se tocam; a região fundida terá partes separadas")
+            m = np.array(members)
+            w = area[m] / area[m].sum()
+            merged = Region(
+                id=-1, area_mm2=float(area[m].sum()),
+                color_rgb=tuple(int(round(c)) for c in (np.array([old[i].color_rgb for i in members]) * w[:, None]).sum(0)),
+                centroid_mm=tuple(float(c) for c in (np.array([old[i].centroid_mm for i in members]) * w[:, None]).sum(0)),
+                touches_frame=any(old[i].touches_frame for i in members),
+                ignored=old[members[int(np.argmax(area[m]))]].ignored)
+            merged.color_name = color_name(merged.color_rgb)
+            items.append((members[0], merged))
+        order = sorted(items, key=lambda t: -t[1].area_mm2)     # região 0 = a maior (empate: id menor)
         newid = np.zeros(n, dtype=np.int32)
         regions = []
-        for k, (src, r) in enumerate(items):
+        for k, (first, r) in enumerate(order):
             r.id = k
             regions.append(r)
-            if src == ids[0]:
-                newid[ids] = k
-            elif src not in ids:
-                newid[src] = k
+            for i in comps[find(first)]:
+                newid[i] = k
         out = PlanarMap(labels=newid[pmap.labels], mm_per_px=pmap.mm_per_px, outer_frame=pmap.outer_frame)
         out.regions = regions
         self._name_regions(out.regions)
@@ -108,8 +135,7 @@ class ImageReader:
         self._name_borders(out)
         h = out.labels.shape[0]
         mpp = out.mm_per_px
-        keep = [p for p in pmap.points if not p.is_junction]
-        for p in keep:
+        for p in (q for q in pmap.points if not q.is_junction):
             p.id = len(out.points)
             out.points.append(p)
         for x, y, regs in pts.junction_points(chains, lambda q: self._to_mm(q, mpp, h),

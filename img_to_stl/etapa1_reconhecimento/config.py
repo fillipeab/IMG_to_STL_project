@@ -33,9 +33,9 @@ class Etapa1Config:
     ignore_color: Optional[Tuple[int, int, int]] = None
     ignore_tolerance: float = 15.0
 
-    # Fusões pedidas pelo usuário: lista de grupos de regiões (números), aplicados em ordem
-    # sobre o resultado já existente. Ex.: [[3, 7], [0, 2, 5]]. Vazio = nenhuma.
-    merge_regions: List[List[int]] = field(default_factory=list)
+    # Fusões pedidas pelo usuário, aplicadas em ordem sobre o resultado já existente. Cada item é uma
+    # lista de números de região ([3, 7]) ou um critério: "familia", "menores=50", "cor=verde,lilas".
+    merge_regions: List[Any] = field(default_factory=list)
 
     # --- famílias ("regiões irmãs") ---
     family_tolerance: float = P.FAMILIA_TOLERANCIA_COR
@@ -87,7 +87,7 @@ AJUDA: Dict[str, str] = {
     "max_regions": "Teto de regiões; se houver mais, funde as mais parecidas até caber.",
     "min_region_area_mm2": "Regiões menores (mm2) são absorvidas pela vizinha de cor mais próxima.",
     "min_region_thickness_mm": "Traços/regiões mais finos que isso (mm) são apagados e preenchidos pela vizinhança. 0 = desligado.",
-    "merge_regions": "Fusões escolhidas por você: grupos de números de região, aplicados em ordem (ex.: [[3, 7], [0, 2]]). Os números valem para o resultado do momento; se mudar outros parâmetros, confira.",
+    "merge_regions": "Fusões pedidas por você, em ordem. Cada item: lista de números de região ([3, 7]) ou critério: \"familia\" (irmãs que se tocam), \"menores=50\" (regiões < 50 mm² vão para a vizinha mais parecida), \"cor=verde,lilas\" (regiões de mesma cor viram uma). Números valem para o resultado do momento: se mudar outros parâmetros, confira.",
     "ignore_color": "Cor RGB de fundo, ex.: [255, 255, 255]. null = nenhuma.",
     "ignore_tolerance": "Quão próxima (delta E) uma região precisa ser de ignore_color para contar como fundo.",
     "family_tolerance": "Regiões com delta E menor que isso (vizinhas ou não) são 'irmãs' (mesma família). 0 = sem famílias.",

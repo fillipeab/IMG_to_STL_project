@@ -3,6 +3,7 @@
   python run.py                    -> menu: 1) importar nova imagem  2) operar em uma imagem já existente
   python run.py imagem.png         -> importa a imagem e segue o fluxo interativo
   python run.py imagem.png --auto  -> igual a `python -m img_to_stl imagem.png --auto` (sem perguntas)
+  python run.py projeto NOME ação  -> por objeto: ver, regioes, fundir, textura, gerar... (python run.py projeto -h)
 
 Pastas: repositorio/<nome>/ (um projeto por imagem) e saidas/<nome>.stl (só os STL prontos).
 """
@@ -15,6 +16,8 @@ from img_to_stl.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    if args and args[0] in ("projeto", "projetos"):
+        sys.exit(main(args))             # comandos por objeto: sem interação
     if "--auto" not in args and "--interativo" not in args and "-i" not in args:
         args.append("--interativo")      # IDEs nem sempre se declaram terminal: força o modo interativo
     sys.exit(main(args))

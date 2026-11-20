@@ -19,16 +19,38 @@ python -m img_to_stl --projeto imagem --etapa 2 --auto   # só a etapa 2 (depois
 `2) Operar em uma imagem já existente` lista o repositório com o estado de cada uma (etapa 1 ✓/—, etapa 2 ✓/—, STL ✓/—) e
 oferece *refazer a etapa 1* ou *ajustar texturas e gerar o STL* (etapa 2), já com os parâmetros que o projeto usou.
 
-**No terminal, um passo de cada vez:**
-1. *Parâmetros:* `Enter` usa os valores atuais; `a` abre os grupos (tamanho e regiões, famílias e fundo, fronteiras...). Em cada grupo:
-   número altera, `?número` explica (com valor atual e padrão), `Enter` volta.
-2. *Etapa 1:* processa e mostra só o resumo (regiões, famílias, fronteiras, pontos). `v` lista as regiões, `f` **funde** regiões à sua escolha (ex.: `3 7`), `r` refaz, `Enter` segue.
-3. *Etapa 2:* parâmetros (igual) → **texturas das regiões** (sugestão; escolha o número da região e a lista de texturas aparece; `l` mostra a lista a qualquer momento) → gerar o STL.
+**No terminal, um passo de cada vez** (interface principal):
+1. *Parâmetros:* cada etapa abre mostrando só os principais (etapa 1: largura, máximo de regiões, tolerância de cor, cor de fundo; etapa 2: resolução, base, altura das texturas, região lisa).
+   `número` altera, `?<número>` explica (valor atual e padrão), `p` lista **todos** os parâmetros divididos por grupo (e permite alterá-los), `Enter` continua.
+2. *Etapa 1:* processa e mostra só o resumo. `v` lista as regiões, `f` funde regiões, `r` refaz, `Enter` segue.
+3. *Etapa 2:* parâmetros → **texturas das regiões** (escolha o número da região e a lista de texturas aparece; `l` mostra a lista a qualquer momento) → gerar o STL.
+
+**Interface auxiliar (versão 2):** o mesmo fluxo, mas os parâmetros ficam em abas: `Enter` usa os atuais, `a` abre os grupos um a um.
+Escolha com `python -m img_to_stl --interface auxiliar` ou, no menu inicial, `3) Trocar de interface`.
+
+**Por objeto, sem menu:** escolha o projeto e diga o que fazer (`python -m img_to_stl projeto -h`):
+```
+python -m img_to_stl projetos                              # lista os projetos
+python -m img_to_stl projeto demo ver                      # estado, resumo e texturas
+python -m img_to_stl projeto demo regioes                  # regiões numeradas
+python -m img_to_stl projeto demo fundir menores=50        # funde (ver abaixo)
+python -m img_to_stl projeto demo textura 3=ondas/3(1.5)   # muda a textura de uma região
+python -m img_to_stl projeto demo gerar --resolution 0.3   # etapa 2: gera o STL
+python -m img_to_stl projeto demo reconhecer               # refaz a etapa 1
+python -m img_to_stl projeto demo abrir                    # abre no modo interativo (--interface auxiliar)
+```
 
 ## Fundir regiões
-- No CLI: `f` na etapa 1, depois os números (ou nomes) das regiões, ex.: `3 7` ou `3,7,9`. Por linha de comando: `--fundir 3,7` (repetível, em ordem).
-- A região fundida recebe a soma das áreas e a cor média; nomes, famílias, fronteiras e pontos tríplices são refeitos (pontos de interesse ficam).
-- A fusão é guardada em `merge_regions` (`parametros.json`): refazer a etapa 1 com os mesmos parâmetros repete a fusão. Se mudar outros parâmetros, os números podem não valer mais.
+- **Por critério** (sem precisar saber os números):
+  - `familia` junta as regiões irmãs (cor parecida) que se tocam; `familia=2` só a família 2.
+  - `menores=50` manda cada região com menos de 50 mm² para a vizinha de cor mais parecida.
+  - `cor=verde,lilas` junta as regiões de cada cor numa só; `cor=verde+lilas` junta as duas cores numa região só.
+- **Por número ou nome:** `3,7` ou `3 7` (também `03_verde 07_azul`).
+- Onde usar: `f` na etapa 1 do modo interativo (mostra o plano e pede confirmação nos critérios), `--fundir ESPEC` (repetível),
+  ou `python -m img_to_stl projeto NOME fundir ESPEC [ESPEC...]`.
+- A região fundida soma as áreas e usa a cor média; nomes, famílias, fronteiras e pontos tríplices são refeitos (pontos de interesse ficam).
+- A fusão é guardada em `merge_regions` (`parametros.json`): refazer a etapa 1 com os mesmos parâmetros repete a fusão (se algo deixar de valer, vira aviso, não erro).
+  Números valem para o resultado do momento; critérios se adaptam. Para desfazer, deixe `merge_regions` vazio e refaça a etapa 1.
 - O `texturas.json` anterior é guardado como `.antigo` e uma nova sugestão é feita (as regiões mudaram).
 
 ## As duas etapas
@@ -139,7 +161,7 @@ Avançados (filtro, k-means, perfil dos traços): `etapa1_reconhecimento/config.
 | `etapa2_texturas/` | `parametros.py`, `config.py` (`Etapa2Config`), `especificacao.py` (`nome/numero(...)`), `texturas_arquivo.py` (`texturas.json`), `atribuicao.py`, `relevo.py` (`ReliefBuilder`, `HeightField`), `formas_pontos.py`, `stl.py` (`HeightfieldMesher`, `Mesh`), `saida.py`, `pipeline.py` (`Etapa2`), `biblioteca/` (texturas: `base`, `padroes` (0–5), `padroes_extra` (6–12), `transformacoes`, `tiles`, `registro`) |
 | `comum/` | geometria, leitura/escrita de configuração, nomes de arquivos |
 | `config.py`, `pipeline.py` | `PipelineConfig`, `ImageToStl` (orquestra as duas etapas, o repositório e a pasta de STL) |
-| `cli.py`, `interativo.py` | linha de comando, menu principal e sessão interativa |
+| `cli.py`, `cli_projeto.py`, `interativo.py`, `cli_auxiliar.py` | linha de comando, comando por objeto (`projeto NOME ação`), menu e sessão interativa (principal) e interface auxiliar (abas) |
 
 Nova textura: herde de `Texture`, implemente `height(x, y)` (0..1, x/y em mm), defina `texture_id`, `name` e `description` e registre com `TextureLibrary.register` (ela aparece sozinha na lista).
 
@@ -168,7 +190,7 @@ Medidas em mm. Os mesmos nomes valem nos JSON (`parametros.json`, `--config`).
 | `min_region_thickness_mm` | `1.0` | Traços/regiões mais finos que isso (mm) são apagados e preenchidos pela vizinhança. 0 = desligado. |
 | `ignore_color` | `null` | Cor RGB de fundo, ex.: [255, 255, 255]. null = nenhuma. |
 | `ignore_tolerance` | `15.0` | Quão próxima (delta E) uma região precisa ser de ignore_color para contar como fundo. |
-| `merge_regions` | `[]` | Fusões escolhidas por você: grupos de números de região, aplicados em ordem (ex.: [[3, 7], [0, 2]]). Os números valem para o resultado do momento; se mudar outros parâmetros, confira. |
+| `merge_regions` | `[]` | Fusões pedidas por você, em ordem. Cada item: lista de números de região ([3, 7]) ou critério: "familia" (irmãs que se tocam), "menores=50" (regiões < 50 mm² vão para a vizinha mais parecida), "cor=verde,lilas" (regiões de mesma cor viram uma). Números valem para o resultado do momento: se mudar outros parâmetros, confira. |
 | `family_tolerance` | `25.0` | Regiões com delta E menor que isso (vizinhas ou não) são 'irmãs' (mesma família). 0 = sem famílias. |
 | `min_border_length_mm` | `4.0` | Fronteira mais curta que isso (mm) é encolhida: as duas junções viram uma só. |
 | `smooth_sigma_mm` | `0.5` | Suavização das curvas (mm). Maior = mais redondo. |

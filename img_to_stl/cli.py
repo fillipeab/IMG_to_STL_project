@@ -7,6 +7,10 @@ Automático (sem perguntas):
     python -m img_to_stl imagem.png --auto
     python -m img_to_stl imagem.png --etapa 1                      # só o reconhecimento
     python -m img_to_stl --projeto imagem --etapa 2 --auto         # só a etapa 2 (depois de editar texturas.json)
+Por objeto (escolhe o projeto e diz o que fazer; veja `python -m img_to_stl projeto -h`):
+    python -m img_to_stl projetos
+    python -m img_to_stl projeto demo fundir menores=50
+    python -m img_to_stl projeto demo textura 3=ondas/3          (uma ação por comando; depois: projeto demo gerar)
 Repositório: repositorio/<nome>/ (um projeto por imagem) · STL prontos: saidas/<nome>.stl
 """
 from __future__ import annotations
@@ -20,6 +24,7 @@ if __package__ in (None, ""):   # rodado como arquivo (python img_to_stl/cli.py)
     __package__ = "img_to_stl"
 
 from .config import PipelineConfig  # noqa: E402
+from .etapa1_reconhecimento.criterios import parse_fusion  # noqa: E402
 from .etapa2_texturas.biblioteca import TextureLibrary  # noqa: E402
 from .pipeline import ImageToStl  # noqa: E402
 
@@ -34,6 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-i", "--interativo", action="store_true", help="força o modo interativo")
     p.add_argument("-o", "--output", default=None, help="pasta do repositório (padrão: 'repositorio'); cria <pasta>/<nome_da_imagem>/")
     p.add_argument("--saidas", default=None, help="pasta dos STL prontos (padrão: 'saidas')")
+    p.add_argument("--interface", choices=["principal", "auxiliar"], default="principal",
+                   help="interface interativa: principal (parâmetros principais + lista completa) ou auxiliar (versão 2, parâmetros em abas)")
     p.add_argument("--no-negatives", action="store_true", help="não grava os negativos")
     p.add_argument("--config", help="JSON de configuração completo (etapa1 + etapa2)")
     p.add_argument("--save-config", help="salva a configuração final neste JSON")
@@ -50,8 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--min-border", type=float, help="comprimento mínimo de fronteira (mm)")
     g.add_argument("--clusters", type=int, help="cores iniciais do k-means")
     g.add_argument("--ignore-color", metavar="R,G,B", help="cor de fundo (região lisa; fora da base 'silhueta')")
-    g.add_argument("--fundir", action="append", metavar="N,N[,N]",
-                   help="funde regiões (números do resultado da etapa 1), ex.: --fundir 3,7 (repetível, aplicadas em ordem)")
+    g.add_argument("--fundir", action="append", metavar="ESPEC",
+                   help="funde regiões (repetível, em ordem). ESPEC: números (3,7) ou critério: familia | menores=50 | cor=verde,lilas")
     g.add_argument("--marker", action="append", metavar="CLASSE=R,G,B[,TOL]",
                    help="marcador de pontos de interesse: bolinhas dessa cor viram pontos da classe (repetível)")
     g.add_argument("--points-file", help="arquivo .json/.csv de pontos de interesse (classe, nome, x_px, y_px)")
@@ -84,9 +91,9 @@ def apply_overrides(cfg: PipelineConfig, a: argparse.Namespace) -> None:
     if a.ignore_color:
         e1.ignore_color = tuple(int(c) for c in a.ignore_color.split(","))
     for grp in a.fundir or []:
-        group = [int(v) for v in grp.split(",")]
-        if group not in e1.merge_regions:                  # apply_overrides pode rodar duas vezes
-            e1.merge_regions.append(group)
+        entry = parse_fusion(grp)
+        if entry not in e1.merge_regions:                  # apply_overrides pode rodar duas vezes
+            e1.merge_regions.append(entry)
     for m in a.marker or []:
         classe, _, rest = m.partition("=")
         nums = [float(v) for v in rest.split(",")]
@@ -112,6 +119,10 @@ def apply_overrides(cfg: PipelineConfig, a: argparse.Namespace) -> None:
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] in ("projeto", "projetos"):
+        from .cli_projeto import main as projeto_main
+        return projeto_main(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.list_textures:
@@ -131,12 +142,14 @@ def main(argv=None) -> int:
         cfg.to_json(args.save_config)
     app = ImageToStl(cfg, log=print)
     interactive = args.interativo or (not args.auto and sys.stdin.isatty())
+    from . import cli_auxiliar
+    from .interativo import main_menu, params_principal
+    step = cli_auxiliar.params_abas if args.interface == "auxiliar" else params_principal
 
     if not args.image and not args.projeto:
         if not interactive:
             parser.error("informe a imagem (ou --projeto NOME, ou --export-textures PASTA)")
-        from .interativo import main_menu
-        main_menu(app)
+        main_menu(app, params_step=step)
         return 0
 
     stage = args.etapa
@@ -162,7 +175,7 @@ def main(argv=None) -> int:
 
     if interactive:
         from .interativo import interactive_session
-        interactive_session(image, app, proj=proj, start_stage=2 if stage == "2" else 1)
+        interactive_session(image, app, proj=proj, start_stage=2 if stage == "2" else 1, params_step=step)
         return 0
 
     pmap = None

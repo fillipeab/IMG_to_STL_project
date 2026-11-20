@@ -48,6 +48,7 @@ def load_texture_file(path: str, pmap: PlanarMap, default_amplitude_mm: float) -
     if sig and sig != signature(pmap):
         warnings.append("texturas.json foi gerado para outro resultado da etapa 1 (regiões diferentes); "
                         "confira os nomes das regiões")
+        return {}, warnings                                   # não adianta ler: quem chama gera nova sugestão
     by_name = {r.name: r.id for r in pmap.regions}
     by_family = {f.name: f.region_ids for f in pmap.families}
     out: Dict[int, TextureAssignment] = {}
