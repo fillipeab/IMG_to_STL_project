@@ -1,8 +1,13 @@
 """Linha de comando.
 
-Fluxo recomendado (2 passos):
-  1) python -m img_to_stl imagem.png --read-only          # saida/imagem/regioes_preview.png com os ids
-  2) python -m img_to_stl imagem.png --textures 0=1,1=2,2=3,3=4   # saida/imagem/imagem.stl + negativos/
+Interativo (padrão num terminal):
+    python -m img_to_stl                 # menu: 1) importar nova imagem  2) operar em imagem existente
+    python -m img_to_stl imagem.png      # importa a imagem e segue o fluxo interativo
+Automático (sem perguntas):
+    python -m img_to_stl imagem.png --auto
+    python -m img_to_stl imagem.png --etapa 1                      # só o reconhecimento
+    python -m img_to_stl --projeto imagem --etapa 2 --auto         # só a etapa 2 (depois de editar texturas.json)
+Repositório: repositorio/<nome>/ (um projeto por imagem) · STL prontos: saidas/<nome>.stl
 """
 from __future__ import annotations
 
@@ -15,94 +20,157 @@ if __package__ in (None, ""):   # rodado como arquivo (python img_to_stl/cli.py)
     __package__ = "img_to_stl"
 
 from .config import PipelineConfig  # noqa: E402
-from .pipeline import ImageToReliefPipeline, resolve_outputs  # noqa: E402
-from .textures import TextureLibrary  # noqa: E402
+from .etapa2_texturas.biblioteca import TextureLibrary  # noqa: E402
+from .pipeline import ImageToStl  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="img_to_stl", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("image", nargs="?", help="imagem de entrada (png, jpg...)")
+    p.add_argument("--projeto", metavar="NOME", help="projeto já existente no repositório (nome ou caminho da pasta)")
+    p.add_argument("--etapa", choices=["1", "2", "tudo"], default="tudo", help="o que executar (padrão: tudo)")
+    p.add_argument("--auto", action="store_true", help="sem perguntas (padrão quando não há terminal)")
+    p.add_argument("-i", "--interativo", action="store_true", help="força o modo interativo")
+    p.add_argument("-o", "--output", default=None, help="pasta do repositório (padrão: 'repositorio'); cria <pasta>/<nome_da_imagem>/")
+    p.add_argument("--saidas", default=None, help="pasta dos STL prontos (padrão: 'saidas')")
+    p.add_argument("--no-negatives", action="store_true", help="não grava os negativos")
+    p.add_argument("--config", help="JSON de configuração completo (etapa1 + etapa2)")
+    p.add_argument("--save-config", help="salva a configuração final neste JSON")
+    p.add_argument("--list-textures", action="store_true", help="lista as texturas disponíveis e sai")
     p.add_argument("--export-textures", metavar="PASTA",
                    help="grava um tile (STL+PNG+JSON) de cada textura interna para editar no CAD e sai")
-    p.add_argument("-o", "--output", default=None,
-                   help="pasta-base (padrão: 'saida'); cada imagem ganha a subpasta <pasta>/<nome_da_imagem>/. "
-                        "Se terminar em .stl, usa esse caminho exato para o STL")
-    p.add_argument("--no-negatives", action="store_true", help="não grava a pasta negativos/")
-    p.add_argument("--config", help="JSON de configuração (valores do arquivo são a base)")
-    p.add_argument("--save-config", help="salva a configuração final neste JSON")
-    p.add_argument("--read-only", action="store_true", help="só a parte 1: gera previews e mapa.json")
 
-    g = p.add_argument_group("parte 1 — imagem")
+    g = p.add_argument_group("etapa 1 — reconhecimento")
     g.add_argument("--width-mm", type=float, help="largura final da peça")
     g.add_argument("--max-regions", type=int, help="máximo de regiões")
     g.add_argument("--tolerance", type=float, help="ΔE (Lab) para fundir regiões parecidas")
+    g.add_argument("--family-tolerance", type=float, help="ΔE (Lab) para agrupar regiões irmãs (famílias)")
     g.add_argument("--min-region-area", type=float, help="área mínima de região (mm²)")
     g.add_argument("--min-border", type=float, help="comprimento mínimo de fronteira (mm)")
     g.add_argument("--clusters", type=int, help="cores iniciais do k-means")
-    g.add_argument("--junction-points", action="store_true",
-                   help="liga os pontos de intersecção (encontros de 3+ regiões); desligado por padrão")
+    g.add_argument("--ignore-color", metavar="R,G,B", help="cor de fundo (região lisa; fora da base 'silhueta')")
+    g.add_argument("--fundir", action="append", metavar="N,N[,N]",
+                   help="funde regiões (números do resultado da etapa 1), ex.: --fundir 3,7 (repetível, aplicadas em ordem)")
+    g.add_argument("--marker", action="append", metavar="CLASSE=R,G,B[,TOL]",
+                   help="marcador de pontos de interesse: bolinhas dessa cor viram pontos da classe (repetível)")
+    g.add_argument("--points-file", help="arquivo .json/.csv de pontos de interesse (classe, nome, x_px, y_px)")
 
-    g = p.add_argument_group("parte 2 — relevo")
+    g = p.add_argument_group("etapa 2 — texturas e STL")
     g.add_argument("--resolution", type=float, help="resolução da grade (mm); menor = mais detalhe")
     g.add_argument("--base", type=float, help="espessura da base (mm)")
+    g.add_argument("--base-mode", choices=["retangular", "silhueta"], help="formato da base")
+    g.add_argument("--base-regions", help="ids das regiões da base 'silhueta', ex.: 0,1,3")
+    g.add_argument("--smooth-region", dest="smooth_region",
+                   help="região lisa da sugestão: externa (padrão), maior, nenhuma, ou nome/número da região")
     g.add_argument("--amplitude", type=float, help="altura das texturas (mm)")
-    g.add_argument("--textures", help="região=textura[:escala[:esticar[:ângulo]]] separados por vírgula, "
-                                      "ex.: 0=1,1=2:1.5,2=3:1:2:30 "
-                                      f"(texturas: {TextureLibrary.describe()})")
+    g.add_argument("--textura", action="append", metavar="REGIAO=ESPEC",
+                   help=f"textura de uma região (número ou nome), ex.: 3=ondas/3(1.5,2,30) (repetível). "
+                        f"Texturas: {TextureLibrary.describe()}")
+    g.add_argument("--textures-file", help="arquivo texturas.json a usar (padrão: o da pasta etapa2_texturas)")
     g.add_argument("--texture-dir", help="pasta com texturas de CAD/PNG: arquivos <id>_<nome>.stl|png")
+    g.add_argument("--model-triple-points", action="store_true", help="pontos tríplices viram relevo")
     return p
 
 
 def apply_overrides(cfg: PipelineConfig, a: argparse.Namespace) -> None:
-    v, r = cfg.vision, cfg.relief
-    for attr, val in (("width_mm", a.width_mm), ("max_regions", a.max_regions),
-                      ("color_tolerance", a.tolerance), ("min_region_area_mm2", a.min_region_area),
-                      ("min_border_length_mm", a.min_border), ("n_color_clusters", a.clusters)):
+    e1, e2 = cfg.etapa1, cfg.etapa2
+    for attr, val in (("width_mm", a.width_mm), ("max_regions", a.max_regions), ("color_tolerance", a.tolerance),
+                      ("family_tolerance", a.family_tolerance), ("min_region_area_mm2", a.min_region_area),
+                      ("min_border_length_mm", a.min_border), ("n_color_clusters", a.clusters),
+                      ("points_file", a.points_file)):
         if val is not None:
-            setattr(v, attr, val)
+            setattr(e1, attr, val)
+    if a.ignore_color:
+        e1.ignore_color = tuple(int(c) for c in a.ignore_color.split(","))
+    for grp in a.fundir or []:
+        group = [int(v) for v in grp.split(",")]
+        if group not in e1.merge_regions:                  # apply_overrides pode rodar duas vezes
+            e1.merge_regions.append(group)
+    for m in a.marker or []:
+        classe, _, rest = m.partition("=")
+        nums = [float(v) for v in rest.split(",")]
+        item = {"classe": classe, "cor": [int(v) for v in nums[:3]]}
+        if len(nums) > 3:
+            item["tolerancia"] = nums[3]
+        e1.point_markers.append(item)
     for attr, val in (("resolution_mm", a.resolution), ("base_thickness_mm", a.base),
-                      ("texture_amplitude_mm", a.amplitude)):
+                      ("base_mode", a.base_mode), ("texture_amplitude_mm", a.amplitude),
+                      ("texture_dir", a.texture_dir), ("smooth_region", a.smooth_region)):
         if val is not None:
-            setattr(r, attr, val)
-    if a.texture_dir:
-        r.texture_dir = a.texture_dir
-    if a.textures:
-        for item in a.textures.split(","):
-            rid, spec = item.split("=")
-            tid, *extra = spec.split(":")
-            if extra:
-                keys = ("scale", "stretch", "stretch_angle_deg")
-                r.region_textures[int(rid)] = {"texture": int(tid), **{k: float(v) for k, v in zip(keys, extra)}}
-            else:
-                r.region_textures[int(rid)] = int(tid)
+            setattr(e2, attr, val)
+    if a.base_regions:
+        e2.base_regions = [int(v) for v in a.base_regions.split(",")]
+    if a.model_triple_points:
+        e2.model_triple_points = True
+    if a.no_negatives:
+        cfg.negatives = False
+    if a.output:
+        cfg.base_dir = a.output
+    if a.saidas:
+        cfg.stl_dir = a.saidas
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.list_textures:
+        if args.texture_dir:
+            TextureLibrary.load_directory(args.texture_dir)
+        for tid, name, desc in TextureLibrary.catalog():
+            print(f"{tid:>3}  {name:<18}{desc}")
+        return 0
     if args.export_textures:
-        from .tiles import export_texture_templates
+        from .etapa2_texturas.biblioteca import export_texture_templates
         files = export_texture_templates(args.export_textures)
         print(f"{len(files)} modelos gravados em {args.export_textures}/ (STL + PNG + JSON por textura)")
         return 0
-    if not args.image:
-        build_parser().error("informe a imagem (ou use --export-textures PASTA)")
     cfg = PipelineConfig.from_json(args.config) if args.config else PipelineConfig()
     apply_overrides(cfg, args)
-    if args.junction_points:
-        cfg.vision.junction_points = True
-    if args.no_negatives:
-        cfg.output.negatives = False
     if args.save_config:
         cfg.to_json(args.save_config)
+    app = ImageToStl(cfg, log=print)
+    interactive = args.interativo or (not args.auto and sys.stdin.isatty())
 
-    pipe = ImageToReliefPipeline(cfg)
-    out_dir, stl_path = resolve_outputs(args.image, args.output, cfg.output.base_dir)
-    if args.read_only:
-        pipe.read(args.image, out_dir=out_dir)
-        print(f"Previews em {out_dir}/ — veja regioes_preview.png e escolha as texturas com --textures")
+    if not args.image and not args.projeto:
+        if not interactive:
+            parser.error("informe a imagem (ou --projeto NOME, ou --export-textures PASTA)")
+        from .interativo import main_menu
+        main_menu(app)
         return 0
-    pipe.run(args.image, stl_path, out_dir)
+
+    stage = args.etapa
+    if args.projeto:
+        try:
+            proj = app.resolve_project(args.projeto)
+        except FileNotFoundError as e:
+            parser.error(str(e))
+        if not args.config:
+            app.load_params(proj)
+        apply_overrides(cfg, args)                         # flags da linha de comando vencem o que foi gravado
+        image = app.original_image(proj) if stage in ("1", "tudo") else None
+    else:
+        image = args.image
+        if interactive:
+            from .interativo import choose_project_name
+            name = choose_project_name(app, image, input, print)
+            if name is None:
+                return 0
+            proj = app.project_dir(name)
+        else:
+            proj = app.project_dir(image)
+
+    if interactive:
+        from .interativo import interactive_session
+        interactive_session(image, app, proj=proj, start_stage=2 if stage == "2" else 1)
+        return 0
+
+    pmap = None
+    if stage in ("1", "tudo"):
+        pmap = app.run_etapa1(image, proj)
+    if stage in ("2", "tudo"):
+        app.run_etapa2(proj, pmap, args.textures_file, args.textura)
+    print(f"[saída] projeto: {os.path.abspath(proj)}  ·  STL: {os.path.abspath(app.stl_path(proj))}")
     return 0
 
 

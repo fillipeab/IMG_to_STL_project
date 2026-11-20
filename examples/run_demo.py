@@ -1,22 +1,23 @@
-"""Demo: gera uma imagem sintética e roda o pipeline completo.  python examples/run_demo.py"""
+"""Demo: gera uma imagem sintética e roda as duas etapas.  python examples/run_demo.py"""
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from img_to_stl import ImageToReliefPipeline, PipelineConfig  # noqa: E402
+from img_to_stl import ImageToStl, PipelineConfig  # noqa: E402
 import make_demo_image  # noqa: E402
 
 here = os.path.dirname(os.path.abspath(__file__))
-out = os.path.join(here, "saida")
-os.makedirs(out, exist_ok=True)
 img = os.path.join(here, "demo.png")
 make_demo_image.make(img)
 
 cfg = PipelineConfig()
-cfg.vision.width_mm = 100.0
-cfg.relief.resolution_mm = 0.15           # 0.1 para a versão final (arquivo maior)
-cfg.relief.region_textures = {0: 1, 1: 2, 2: 3, 3: 4}   # id da região -> id da textura
-cfg.to_json(os.path.join(out, "config_usada.json"))
+cfg.base_dir = os.path.join(here, "repositorio")
+cfg.stl_dir = os.path.join(here, "saidas")
+cfg.etapa1.width_mm = 100.0
+cfg.etapa2.resolution_mm = 0.15           # 0.1 para a versão final (arquivo maior)
 
-ImageToReliefPipeline(cfg).run(img, os.path.join(out, "peca.stl"), out_dir=out)
+app = ImageToStl(cfg, log=print)
+pmap = app.run_etapa1(img)                # repositorio/demo/etapa1_reconhecimento/...
+# Aqui você pode abrir repositorio/demo/etapa2_texturas/texturas.json depois da 1ª execução e editar as texturas.
+app.run_etapa2(os.path.join(cfg.base_dir, "demo"), pmap)

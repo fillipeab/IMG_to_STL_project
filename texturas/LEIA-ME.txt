@@ -1,5 +1,5 @@
 Coloque aqui as suas texturas editadas (STL do CAD ou PNG em tons de cinza), nomeadas "<id>_<nome>.stl|png",
-com id >= 100. Exemplo: 100_domos.stl. Use com:  --texture-dir texturas --textures 0=100
+com id >= 100. Exemplo: 100_domos.stl. Use com:  --texture-dir texturas e, no texturas.json, "100_nome/100"
 Modelos para começar a editar: ../texturas_modelo/ (copie e renomeie com um id >= 100).
 Regras do STL: XY = plano do tile (caixa XY = tamanho do tile, ex.: 10x10 mm), Z para cima, mm,
 fundo plano, superfície de cima é um relevo sem cavidades/sobreposições, bordas que se encaixam.

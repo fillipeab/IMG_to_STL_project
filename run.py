@@ -1,7 +1,10 @@
-"""Atalho para rodar sem instalar.
+"""Atalho para rodar sem instalar (serve também para o botão "Run" de uma IDE).
 
-  python run.py                      -> pergunta o endereço da imagem e gera saida/<nome_da_imagem>/
-  python run.py imagem.png -o x.stl  -> igual a `python -m img_to_stl imagem.png -o x.stl`
+  python run.py                    -> menu: 1) importar nova imagem  2) operar em uma imagem já existente
+  python run.py imagem.png         -> importa a imagem e segue o fluxo interativo
+  python run.py imagem.png --auto  -> igual a `python -m img_to_stl imagem.png --auto` (sem perguntas)
+
+Pastas: repositorio/<nome>/ (um projeto por imagem) e saidas/<nome>.stl (só os STL prontos).
 """
 import os
 import sys
@@ -10,20 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from img_to_stl.cli import main  # noqa: E402
 
-
-def pedir_imagem() -> str:
-    """Pergunta o endereço da imagem até receber um arquivo que exista."""
-    while True:
-        caminho = input("Endereço da imagem (pode arrastar o arquivo para cá): ").strip().strip("\"'")
-        caminho = os.path.expanduser(caminho)
-        if os.path.isfile(caminho):
-            return caminho
-        print(f"  Arquivo não encontrado: {caminho!r}. Tente de novo.")
-
-
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if not args:
-        imagem = pedir_imagem()
-        args = [imagem]
+    if "--auto" not in args and "--interativo" not in args and "-i" not in args:
+        args.append("--interativo")      # IDEs nem sempre se declaram terminal: força o modo interativo
     sys.exit(main(args))

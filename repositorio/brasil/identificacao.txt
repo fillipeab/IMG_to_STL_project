@@ -1,0 +1,16 @@
+img_to_stl 0.3.0 — identificação do projeto
+
+projeto: brasil
+data: 2026-11-20 17:10
+imagem de entrada: c:\Users\Filipe.DESKTOP-H8MT4J5\Documents\Organizadora\01_Documentos_Escritos_Papeis_E_Etc\3_Educacao\5_Faculdade\CompSoc\img_to_stl_project\examples\brasil.jpg
+cópia da imagem: imagem_original.jpg
+peça: 100.0 x 66.7 mm
+
+Conteúdo da pasta:
+  etapa1_reconhecimento/  parâmetros e resultados do reconhecimento (regiões, famílias, fronteiras, pontos),
+                   prévia e negativos numerados/nomeados
+  etapa2_texturas/    parâmetros, texturas.json (editável), prévia do relevo e relatório
+O STL fica em saidas/brasil.stl (pasta só de STL).
+
+Para refazer só a etapa 2 (ex.: depois de editar texturas.json):
+  python -m img_to_stl --projeto brasil --etapa 2 --auto

@@ -1,0 +1,106 @@
+ETAPA 1 — RECONHECIMENTO DA IMAGEM
+========================================
+
+PARÂMETROS UTILIZADOS
+----------------------------------------
+width_mm = 100.0
+    # Largura final da peça em mm; a altura segue a proporção da imagem.
+work_max_px = 1200
+    # Lado maior (pixels) da imagem usada nos cálculos. Maior = contornos mais finos, mais lento.
+denoise_iterations = 2
+    # Passadas do filtro bilateral que suaviza cores sem borrar bordas. 0 desliga.
+denoise_sigma_color = 25.0
+    # Quanto dois tons podem diferir e ainda serem misturados pelo filtro.
+denoise_sigma_space = 7.0
+    # Tamanho (pixels) da vizinhança do filtro.
+n_color_clusters = 16
+    # Cores iniciais do k-means, antes das fusões. Mantenha >= max_regions.
+color_tolerance = 10.0
+    # Grau de semelhança (delta E, Lab): vizinhas mais parecidas que isso viram uma região.
+max_regions = 12
+    # Teto de regiões; se houver mais, funde as mais parecidas até caber.
+min_region_area_mm2 = 15.0
+    # Regiões menores (mm2) são absorvidas pela vizinha de cor mais próxima.
+min_region_thickness_mm = 1.0
+    # Traços/regiões mais finos que isso (mm) são apagados e preenchidos pela vizinhança. 0 = desligado.
+ignore_color = None
+    # Cor RGB de fundo, ex.: [255, 255, 255]. null = nenhuma.
+ignore_tolerance = 15.0
+    # Quão próxima (delta E) uma região precisa ser de ignore_color para contar como fundo.
+merge_regions = []
+    # Fusões escolhidas por você: grupos de números de região, aplicados em ordem (ex.: [[3, 7], [0, 2]]). Os números valem para o resultado do momento; se mudar outros parâmetros, confira.
+family_tolerance = 25.0
+    # Regiões com delta E menor que isso (vizinhas ou não) são 'irmãs' (mesma família). 0 = sem famílias.
+min_border_length_mm = 4.0
+    # Fronteira mais curta que isso (mm) é encolhida: as duas junções viram uma só.
+smooth_sigma_mm = 0.5
+    # Suavização das curvas (mm). Maior = mais redondo.
+simplify_tol_mm = 0.12
+    # Simplificação Douglas-Peucker (mm). Maior = menos pontos na curva.
+outer_frame = True
+    # true = fronteira também em volta de toda a peça.
+triple_min_regions = 3
+    # Nº mínimo de regiões que se encontram num ponto tríplice (3 = junção em Y).
+triple_merge_dist_mm = 1.5
+    # Junções mais próximas que isso (mm) viram um ponto só.
+point_markers = []
+    # Marcadores de pontos de interesse na imagem: [{"classe": "capital", "cor": [255,0,0], "tolerancia": 30}].
+points_file = None
+    # Arquivo .json/.csv com pontos de interesse (classe, nome, x_px, y_px ou x_mm, y_mm). null = nenhum.
+marker_max_area_mm2 = 80.0
+    # Manchas de cor maiores que isso (mm2) não são tratadas como marcador.
+negatives_px_per_mm = 10.0
+    # Resolução dos negativos (pixels por mm).
+negatives_line_mm = 0.5
+    # Espessura (mm) da linha nas imagens de fronteiras.
+negatives_point_radius_mm = 1.2
+    # Raio (mm) da marca de cada ponto nas imagens de pontos.
+random_seed = 0
+    # Semente do k-means: o mesmo valor repete o mesmo resultado.
+
+RESULTADOS OBTIDOS
+----------------------------------------
+peça: 100.0 x 66.7 mm
+número de regiões: 6
+número de famílias (regiões irmãs): 6
+número de fronteiras: 11 (683 mm no total)
+pontos tríplices: 4
+pontos múltiplos (4+ regiões): 2
+pontos de interesse: nenhum
+
+REGIÕES  (nome | família | cor | rgb | área mm² | fundo)
+  00_branco | familia_00_branco | branco | (252, 252, 252) | 4752.8 | não
+  01_lilas | familia_01_lilas | lilas | (165, 149, 211) | 847.8 | não
+  02_bege_1 | familia_02_bege | bege | (194, 212, 150) | 365.8 | não
+  03_bege_2 | familia_03_bege | bege | (221, 177, 98) | 345.6 | não
+  04_azul_claro | familia_04_azul_claro | azul_claro | (114, 174, 192) | 215.8 | não
+  05_rosa | familia_05_rosa | rosa | (235, 148, 147) | 139.0 | não
+
+FAMÍLIAS  (regiões irmãs: cor parecida, vizinhas ou não)
+  familia_00_branco: 00_branco
+  familia_01_lilas: 01_lilas
+  familia_02_bege: 02_bege_1
+  familia_03_bege: 03_bege_2
+  familia_04_azul_claro: 04_azul_claro
+  familia_05_rosa: 05_rosa
+
+FRONTEIRAS  (nome | comprimento mm)
+  F00_r00_r03 | 43.4
+  F01_r01_r03 | 23.6
+  F02_r00_r01 | 107.3
+  F03_r01_r02 | 42.7
+  F04_r00_r02 | 25.9
+  F05_r03_r04 | 16.0
+  F06_r02_r04 | 21.4
+  F07_r00_r04 | 20.0
+  F08_r04_r05 | 10.9
+  F09_r00_r05 | 38.5
+  F10_moldura_r00 | 333.3
+
+PONTOS  (id | classe | nome | x,y mm | regiões)
+  0 | multiplo | - | 45.6, 18.9 | 0,2,4,5
+  1 | multiplo | - | 57.6, 34.1 | 1,2,3,4
+  2 | triplice | - | 54.3, 15.7 | 0,4,5
+  3 | triplice | - | 68.2, 27.2 | 0,3,4
+  4 | triplice | - | 33.7, 34.5 | 0,1,2
+  5 | triplice | - | 57.8, 55.0 | 0,1,3

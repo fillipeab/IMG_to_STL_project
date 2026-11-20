@@ -1,206 +1,232 @@
 # img_to_stl
 
-Imagem → **regiões, fronteiras** (e **pontos**: de interesse, no futuro, e de intersecção, opcionais) → relevo 2.5D texturizado → **STL** para impressão 3D.
+Imagem → **etapa 1: reconhecimento** (regiões, famílias, fronteiras e pontos) → **etapa 2: textura** (relevo 2.5D) → **STL** para impressão 3D.
 
 ## Instalação
 ```
 pip install -r requirements.txt     # numpy, scipy, opencv-python, Pillow
 ```
 
-## Uso (2 passos)
+## Uso
 ```
-# 1) lê a imagem e gera saida/imagem/regioes_preview.png (com o id de cada região), mapa.json e negativos/
-python -m img_to_stl imagem.png --read-only --width-mm 120 --max-regions 8 --tolerance 12
-
-# 2) escolhe as texturas por região e gera o STL em saida/imagem/imagem.stl
-python -m img_to_stl imagem.png --width-mm 120 --max-regions 8 --tolerance 12 --textures 0=1,1=2,2=3,3=4
+python run.py                       # menu: 1) importar nova imagem  2) operar em uma imagem já existente
+python -m img_to_stl imagem.png     # importa a imagem e segue o fluxo interativo
+python -m img_to_stl imagem.png --auto            # sem perguntas: etapa 1 + etapa 2 com os padrões
+python -m img_to_stl imagem.png --etapa 1         # só o reconhecimento
+python -m img_to_stl --projeto imagem --etapa 2 --auto   # só a etapa 2 (depois de editar texturas.json)
 ```
-Ou só `python run.py`, que pergunta o endereço da imagem.
+**Menu:** `1) Importar nova imagem` copia a imagem para o repositório (se o nome já existe: sobrescrever, novo nome ou cancelar).
+`2) Operar em uma imagem já existente` lista o repositório com o estado de cada uma (etapa 1 ✓/—, etapa 2 ✓/—, STL ✓/—) e
+oferece *refazer a etapa 1* ou *ajustar texturas e gerar o STL* (etapa 2), já com os parâmetros que o projeto usou.
 
-**Saídas:** cada imagem ganha a própria pasta `saida/<nome_da_imagem>/`:
+**No terminal, um passo de cada vez:**
+1. *Parâmetros:* `Enter` usa os valores atuais; `a` abre os grupos (tamanho e regiões, famílias e fundo, fronteiras...). Em cada grupo:
+   número altera, `?número` explica (com valor atual e padrão), `Enter` volta.
+2. *Etapa 1:* processa e mostra só o resumo (regiões, famílias, fronteiras, pontos). `v` lista as regiões, `f` **funde** regiões à sua escolha (ex.: `3 7`), `r` refaz, `Enter` segue.
+3. *Etapa 2:* parâmetros (igual) → **texturas das regiões** (sugestão; escolha o número da região e a lista de texturas aparece; `l` mostra a lista a qualquer momento) → gerar o STL.
+
+## Fundir regiões
+- No CLI: `f` na etapa 1, depois os números (ou nomes) das regiões, ex.: `3 7` ou `3,7,9`. Por linha de comando: `--fundir 3,7` (repetível, em ordem).
+- A região fundida recebe a soma das áreas e a cor média; nomes, famílias, fronteiras e pontos tríplices são refeitos (pontos de interesse ficam).
+- A fusão é guardada em `merge_regions` (`parametros.json`): refazer a etapa 1 com os mesmos parâmetros repete a fusão. Se mudar outros parâmetros, os números podem não valer mais.
+- O `texturas.json` anterior é guardado como `.antigo` e uma nova sugestão é feita (as regiões mudaram).
+
+## As duas etapas
+**Etapa 1 — reconhecimento** (`img_to_stl/etapa1_reconhecimento/`). Métodos clássicos de visão computacional (sem rede neural):
+filtro bilateral → k-means em Lab → componentes conexos → remoção de traços finos → fusão por cor/área → fronteiras traçadas
+entre pixels (suavizadas, contínuas, sem pontas soltas) → pontos.
+- **Regiões**: setores de cor homogênea. Cada uma tem número, **nome** (`03_verde_2` = número + cor + ordinal) e **família**.
+- **Famílias ("regiões irmãs")**: regiões de cor parecida (ΔE < `family_tolerance`), vizinhas ou não. Servem para tratar "todos os verdes" juntos.
+- **Fronteiras**: linhas entre regiões (`F03_r01_r04`); a moldura externa é `F00_moldura_rNN`.
+- **Pontos**, cada um com uma **classe**: `triplice` (3 regiões se encontram) e `multiplo` (4+) — sempre calculados e listados;
+  e **pontos de interesse** (`capital`, `cidade`... a classe é sua) informados de duas formas:
+  1. **marcadores** na imagem: bolinhas de uma cor combinada (`--marker capital=255,0,0,30`); são localizadas e apagadas da imagem;
+  2. **arquivo** `.json`/`.csv` (`--points-file`) com `classe, nome, x_px, y_px` (pixels da imagem original) ou `x_mm, y_mm`.
+
+**Etapa 2 — textura e STL** (`img_to_stl/etapa2_texturas/`):
+- **Base**: `base_mode = "retangular"` (placa inteira) ou `"silhueta"` (a base segue o contorno das regiões escolhidas em `base_regions`,
+  ou de todas que não são fundo — defina o fundo com `--ignore-color`). O cordão da fronteira com o fundo cabe inteiro na base.
+- **Texturas**: o programa **sugere** (vizinhas nunca repetem; nenhuma repete enquanto houver textura livre; uma região fica lisa, ver `smooth_region`) e grava `texturas.json`; você edita.
+  A lisa automática não age se já houver fundo (`--ignore-color`) ou lisa escolhida à mão.
+- Cordões de fronteira, pontos de interesse com forma por classe (`point_shape_by_class`), exclusão com textura reduzida.
+  Pontos tríplices/múltiplos só viram relevo se ligados (`model_triple_points`, `model_multiple_points`).
+
+## Texturas disponíveis
+Todas periódicas em tile de 10 mm (continuam sem emenda entre regiões). `0` (lisa) é sugerida para **uma** região (parâmetro `smooth_region`: `externa` = a maior que toca a borda, `maior`, `nenhuma` ou o nome/número de uma região); em qualquer região você pode escolher `lisa/0`.
+| id | nome | descrição |
+|---|---|---|
+| `0` | lisa | sem relevo: superfície lisa |
+| `1` | linhas diagonais | linhas diagonais a 45° |
+| `2` | X's | X grande em cada célula, com mini-X entre eles |
+| `3` | ondas | ondas tortinhas, em fileiras |
+| `4` | escamas | escamas sobrepostas (arcos) |
+| `5` | losangos | losangos em pirâmide |
+| `6` | pontos | cúpulas pequenas em grade |
+| `7` | xadrez | quadrados altos e baixos alternados |
+| `8` | grade | traços cruzados na horizontal e vertical |
+| `9` | zigue-zague | traços em V, como espinha de peixe |
+| `10` | aneis | anéis concêntricos com ponto central |
+| `11` | tijolos | tijolos em fileiras desencontradas |
+| `12` | colinas | ondulado suave nos dois sentidos |
+
+Parâmetros próprios de cada uma em `texture_params` (ex.: `{"6": {"pitch": 5.0, "diameter": 2.4}}`): 2 `mini_ratio`, `corner_height` · 6 `pitch`, `diameter` ·
+7 `cell`, `bevel` · 8 `pitch`, `width` · 9 `pitch`, `amp`, `period`, `width` · 10 `cell`, `radius`, `width` · 11 `brick_w`, `brick_h`, `mortar`, `bevel` · 12 `period`.
+Valores de passo/célula devem dividir 10 mm para o tile fechar. Prévia de todas: `examples/texturas_preview.png`.
+
+### Especificação de textura: `nome/numero(distorções)`
+Como uma função: textura e distorções entre parênteses, em ordem ou por nome.
 ```
-saida/imagem/
-  imagem.stl               relevo para imprimir
-  regioes_preview.png      regiões coloridas com o id de cada uma (use nos --textures)
-  relevo_preview.png       prévia sombreada do relevo
-  mapa.json                regiões, fronteiras e pontos (com a geometria)
-  negativos/               preto e branco, mesma escala e enquadramento do relevo
-    regioes.png            um tom de cinza por região (fora da peça = preto)
-    fronteiras.png         cordões em branco
-    pontos.png             pontos em branco (vazio por padrão: sem pontos de interesse nem de intersecção)
-    composto.png           os três juntos (pontos em vermelho)
-    regioes/regiao_NN.png  máscara de cada região
+ondas/3                          textura 3, sem distorção          (também vale só "3" ou só "ondas")
+ondas/3(1.5)                     escala 1,5
+ondas/3(1.5, 2, 30)              escala 1,5 · alongada 2x na direção de 30°
+escamas/4(escala=0.8, amp=0.9)   por nome, ordem livre; amp = altura própria (mm)
+lisa/0                           sem textura
 ```
-`-o PASTA` muda a pasta-base (padrão `saida`); `-o x.stl` usa esse caminho exato para o STL.
-`--no-negatives` não grava `negativos/`.
+Ordem posicional: `escala, alongar, angulo, cisalhar, rotacao, desloc_x, desloc_y, onda_amp, onda_comp`; mais `amp` (só por nome).
+Texturas: veja a tabela abaixo (ou `python -m img_to_stl --list-textures`); `>= 100` = as suas (pasta `--texture-dir`).
 
-## Texturas (ids)
-Regiões sem textura escolhida recebem uma automaticamente: **vizinhas nunca ficam com a mesma** e, sempre que possível, **nenhuma textura se repete** na imagem. Escolhas manuais (`--textures`, `region_textures`) valem como estão, mesmo repetidas.
-`0` lisa · `1` linhas diagonais · `2` X's (grandes + mini) · `3` ondas · `4` escamas · `5` losangos (pirâmides).
-Todas periódicas em tile de 10 mm, em coordenadas globais (contínuas entre regiões).
-Parâmetros por textura em `relief.texture_params`, ex.: `{"2": {"mini_ratio": 0.625, "corner_height": 0.3}}`.
-
-## Parâmetros: onde mudar
-Três níveis, do mais simples ao mais pontual (o de baixo vence o de cima):
-1. **`img_to_stl/parametros.py`** — padrões principais, comentados um a um. Edite e rode de novo.
-2. **`--config arquivo.json`** — um conjunto de valores por projeto. `config_exemplo.json` mostra o formato; o significado de cada parâmetro está no **Anexo** no fim deste arquivo.
-3. **Linha de comando** — `--width-mm`, `--max-regions`, `--tolerance`, `--resolution`, etc., só naquela execução.
-
-Parâmetros avançados (filtro de ruído, k-means, perfil dos traços, textura por região) ficam em
-`img_to_stl/config.py`, também comentados.
-
-## Distorção de texturas (`transforms.py`)
-Camada intermediária que transforma as coordenadas antes de avaliar a textura (vale para qualquer
-textura, inclusive as de CAD). Por região, em `relief.region_textures`:
+### `texturas.json` (arquivo de geração)
 ```json
-{"0": {"texture": 2, "scale": 1.5, "stretch": 2.0, "stretch_angle_deg": 30,
-       "shear": 0.0, "rotation_deg": 0, "offset_mm": [0, 0],
-       "warp_amplitude_mm": 0.0, "warp_wavelength_mm": 20, "amplitude_mm": 0.6}}
+{"regioes":  {"00_azul": "ondas/3", "01_verde_1": "escamas/4(escala=1.5)"},
+  "familias": {"familia_01_verde": "linhas_diagonais/1"}}
 ```
-- `scale`: amplia (>1) ou reduz (<1). `stretch`: alonga ao longo de `stretch_angle_deg`. `shear`: inclina.
-- `warp_*`: ondula o padrão. `rotation_deg` / `offset_mm`: giram/deslocam.
-- Na linha de comando: `--textures 0=2:1.5:2:30` (textura 2, escala 1.5, esticar 2x a 30°).
-- A distorção é geométrica: a largura dos traços muda junto. Para manter a largura e mudar só o
-  espaçamento, ajuste `texture_params` (pitch, cell, diag_x...). O código avisa se algum traço ficar
-  menor que `min_feature_warn_mm` (0,4 mm).
+`familias` vale para as regiões irmãs sem linha própria em `regioes`. Erros dizem qual linha está errada.
+Depois de editar: opção 2 do menu, ou `python -m img_to_stl --projeto imagem --etapa 2 --auto`.
+Na linha de comando: `--textura 3=ondas/3(1.5,2,30)` (repetível).
+
+## Pastas: repositório e saídas
+```
+repositorio/<nome_da_imagem>/        um projeto por imagem (tudo sobre ela)
+  identificacao.txt                  identificação geral
+  imagem_original.<ext>              cópia da imagem de entrada
+  etapa1_reconhecimento/
+    parametros.json                  parâmetros usados
+    parametros_e_resultados.txt      parâmetros + resultados (nº de regiões, famílias, tríplices, pontos de interesse, tabelas)
+    resultado.json  rotulos.png      resultado completo (a etapa 2 recarrega daqui)
+    previa.png                       regiões coloridas com número, fronteiras e pontos por classe
+    negativos/
+      regioes/regiao_03_verde_2.png  uma máscara por região (nomeada/numerada)
+      regioes_niveis_de_cinza.png
+      familias/familia_01_verde.png  uma máscara por família
+      fronteiras/fronteiras.png  fronteiras_numeradas.png
+      pontos/pontos_marcados.png (legenda por classe)  pontos_<classe>.png
+  etapa2_texturas/
+    parametros.json                  parâmetros usados (editável)
+    texturas.json                    texturas por região (editável)
+    previa_relevo.png                relevo sombreado
+    relatorio.txt                    parâmetros, texturas aplicadas, triângulos, volume, avisos
+
+saidas/<nome_da_imagem>.stl          só os STL prontos para imprimir (sem cópia dentro do projeto: um STL fino pode ter 100–200 MB)
+```
+Mudar de pasta: `-o PASTA` (repositório) e `--saidas PASTA`, ou `base_dir` / `stl_dir` no JSON. Gerar de novo sobrescreve o STL de mesmo nome.
+
+## Parâmetros: onde mudar (o de baixo vence o de cima)
+1. `etapa1_reconhecimento/parametros.py` e `etapa2_texturas/parametros.py` — padrões, comentados um a um.
+2. `--config arquivo.json` (ver `config_exemplo.json`) ou os `parametros.json` / `texturas.json` da pasta do projeto.
+3. Linha de comando (`--width-mm`, `--max-regions`, `--resolution`...) ou o modo interativo.
+Avançados (filtro, k-means, perfil dos traços): `etapa1_reconhecimento/config.py` e `etapa2_texturas/config.py`.
 
 ## Texturas no CAD (FreeCAD ↔ Python)
-- **Exportar modelos:** `python -m img_to_stl --export-textures texturas_modelo` grava, para cada textura
-  interna, um tile 10×10 mm em STL (sólido fechado), PNG e JSON — já incluídos em `texturas_modelo/`.
-- **Editar:** abra o STL no FreeCAD (como referência) e modele o seu tile, ou pinte o PNG em
-  GIMP/Krita (preto = baixo, branco = alto; use "tornar contínuo/seamless").
-- **Trazer de volta:** no FreeCAD, selecione o corpo → *Arquivo → Exportar → STL (mesh)* e salve em
-  `texturas/100_meu_padrao.stl` (id ≥ 100). Use: `--texture-dir texturas --textures 0=100`.
-- Regras do STL: XY = plano do tile (a caixa XY do STL é o tamanho do tile), Z para cima, mm; fundo plano;
-  a superfície de cima é um relevo sem cavidades/sobreposições; bordas esquerda/direita e
-  topo/base se encaixam. O código usa o z-buffer das faces voltadas para cima, normaliza 0..1
-  (menor→maior altura) e repete o tile; a amplitude vem de `texture_amplitude_mm`.
-  Dá para combinar com distorção (ex.: o mesmo tile reduzido e girado em outra região).
+- **Exportar modelos:** `python -m img_to_stl --export-textures texturas_modelo` (tile 10×10 mm em STL, PNG e JSON; já em `texturas_modelo/`).
+- **Editar:** abra o STL no FreeCAD ou pinte o PNG (preto = baixo, branco = alto; tornar contínuo/seamless).
+- **Trazer de volta:** exporte STL (mesh) para `texturas/100_meu_padrao.stl` (id ≥ 100) e use `--texture-dir texturas` e `"100_meu_padrao/100"` (ou `100`) no `texturas.json`.
+- Regras do STL: XY = plano do tile; Z para cima, mm; fundo plano; topo sem cavidades; bordas que se encaixam.
 
-## Estrutura
-| Arquivo | Classes principais |
+## Estrutura do código
+| Pasta / arquivo | Conteúdo |
 |---|---|
-| `config.py` | `VisionConfig`, `ReliefConfig`, `PipelineConfig` (JSON) |
-| `vision.py` | `ImageReader`, `RegionGraph`, `BorderTracer`, `PlanarMap`, `Region`, `Border`, `InterestPoint` |
-| `textures.py` | `Texture` (base), `FlatTexture`, `DiagonalLinesTexture`, `XPatternTexture`, `WavesTexture`, `ScalesTexture`, `RidgeProfile`, `TextureLibrary` |
-| `parametros.py` | parâmetros principais editáveis (fronteira, pontos, exclusões...) |
-| `negatives.py` | `NegativeRenderer` (negativos: regiões, fronteiras, pontos) |
-| `transforms.py` | `TextureTransform`, `TransformedTexture` (distorção) |
-| `tiles.py` | `TileTexture`, `read_stl`, `rasterize_top`, `export_texture_templates` (ida e volta com CAD) |
-| `relief.py` | `ReliefBuilder`, `TextureAssigner`, `PointShape` (`CirclePoint`, `SquarePoint`, `TrianglePoint`), `HeightField` |
-| `stl_export.py` | `HeightfieldMesher`, `Mesh` (valida malha estanque e grava STL binário) |
-| `pipeline.py` | `ImageToReliefPipeline` |
+| `etapa1_reconhecimento/` | `parametros.py`, `config.py` (`Etapa1Config`), `leitor.py` (`ImageReader`), `fusao.py`, `fronteiras.py`, `cores.py` (nomes e famílias), `pontos.py`, `modelos.py` (`PlanarMap`, `Region`, `Family`, `Border`, `InterestPoint`), `negativos.py`, `saida.py`, `pipeline.py` (`Etapa1`) |
+| `etapa2_texturas/` | `parametros.py`, `config.py` (`Etapa2Config`), `especificacao.py` (`nome/numero(...)`), `texturas_arquivo.py` (`texturas.json`), `atribuicao.py`, `relevo.py` (`ReliefBuilder`, `HeightField`), `formas_pontos.py`, `stl.py` (`HeightfieldMesher`, `Mesh`), `saida.py`, `pipeline.py` (`Etapa2`), `biblioteca/` (texturas: `base`, `padroes` (0–5), `padroes_extra` (6–12), `transformacoes`, `tiles`, `registro`) |
+| `comum/` | geometria, leitura/escrita de configuração, nomes de arquivos |
+| `config.py`, `pipeline.py` | `PipelineConfig`, `ImageToStl` (orquestra as duas etapas, o repositório e a pasta de STL) |
+| `cli.py`, `interativo.py` | linha de comando, menu principal e sessão interativa |
 
-Nova textura: herde de `Texture`, implemente `height(x, y)` (0..1, x/y em mm), defina `texture_id` e
-registre com `TextureLibrary.register`.
+Nova textura: herde de `Texture`, implemente `height(x, y)` (0..1, x/y em mm), defina `texture_id`, `name` e `description` e registre com `TextureLibrary.register` (ela aparece sozinha na lista).
 
 ## Limites conhecidos
-- A grade é regular: áreas lisas também geram triângulos (sem decimação).
-- Regiões com a mesma cor, mas não vizinhas, são regiões separadas (cada uma recebe seu id).
+- A grade é regular: áreas lisas também geram triângulos. A base "silhueta" gera ~2x mais triângulos por célula (topo + fundo); aumente `resolution_mm` se o arquivo ficar grande.
+- Regiões de mesma cor não vizinhas são regiões separadas (mas ficam na mesma família).
 - Pensado para imagens de áreas de cor definidas (mapas, ilustrações). Fotos precisam de `max_regions` baixo.
 
 Testes: `python -m pytest tests` ou `python tests/test_smoke.py`
 
 ## Anexo — Referência de parâmetros
-Medidas em mm. "Padrão" = valor em `parametros.py` (ou `config.py` quando não está lá).
+Medidas em mm. Os mesmos nomes valem nos JSON (`parametros.json`, `--config`).
 
-### Peça e resolução
+### Etapa 1 (`Etapa1Config`)
 | Parâmetro | Padrão | O que faz |
 |---|---|---|
-| `width_mm` | 100 | Largura final; a altura segue a proporção da imagem. |
-| `resolution_mm` | 0,1 | Passo da grade. Menor = mais detalhe e STL maior (100×100 mm ≈ 200 MB a 0,1; use 0,2–0,3 para testar). |
-| `base_thickness_mm` | 1,0 | Espessura da placa lisa sob o relevo. |
-| `work_max_px` | 1200 | Lado maior da imagem usada nos cálculos (reduz se for maior). Maior = contornos mais finos, mais lento. |
+| `width_mm` | `100.0` | Largura final da peça em mm; a altura segue a proporção da imagem. |
+| `work_max_px` | `1200` | Lado maior (pixels) da imagem usada nos cálculos. Maior = contornos mais finos, mais lento. |
+| `denoise_iterations` | `2` | Passadas do filtro bilateral que suaviza cores sem borrar bordas. 0 desliga. |
+| `denoise_sigma_color` | `25.0` | Quanto dois tons podem diferir e ainda serem misturados pelo filtro. |
+| `denoise_sigma_space` | `7.0` | Tamanho (pixels) da vizinhança do filtro. |
+| `n_color_clusters` | `16` | Cores iniciais do k-means, antes das fusões. Mantenha >= max_regions. |
+| `color_tolerance` | `10.0` | Grau de semelhança (delta E, Lab): vizinhas mais parecidas que isso viram uma região. |
+| `max_regions` | `12` | Teto de regiões; se houver mais, funde as mais parecidas até caber. |
+| `min_region_area_mm2` | `15.0` | Regiões menores (mm2) são absorvidas pela vizinha de cor mais próxima. |
+| `min_region_thickness_mm` | `1.0` | Traços/regiões mais finos que isso (mm) são apagados e preenchidos pela vizinhança. 0 = desligado. |
+| `ignore_color` | `null` | Cor RGB de fundo, ex.: [255, 255, 255]. null = nenhuma. |
+| `ignore_tolerance` | `15.0` | Quão próxima (delta E) uma região precisa ser de ignore_color para contar como fundo. |
+| `merge_regions` | `[]` | Fusões escolhidas por você: grupos de números de região, aplicados em ordem (ex.: [[3, 7], [0, 2]]). Os números valem para o resultado do momento; se mudar outros parâmetros, confira. |
+| `family_tolerance` | `25.0` | Regiões com delta E menor que isso (vizinhas ou não) são 'irmãs' (mesma família). 0 = sem famílias. |
+| `min_border_length_mm` | `4.0` | Fronteira mais curta que isso (mm) é encolhida: as duas junções viram uma só. |
+| `smooth_sigma_mm` | `0.5` | Suavização das curvas (mm). Maior = mais redondo. |
+| `simplify_tol_mm` | `0.12` | Simplificação Douglas-Peucker (mm). Maior = menos pontos na curva. |
+| `outer_frame` | `true` | true = fronteira também em volta de toda a peça. |
+| `triple_min_regions` | `3` | Nº mínimo de regiões que se encontram num ponto tríplice (3 = junção em Y). |
+| `triple_merge_dist_mm` | `1.5` | Junções mais próximas que isso (mm) viram um ponto só. |
+| `point_markers` | `[]` | Marcadores de pontos de interesse na imagem: [{"classe": "capital", "cor": [255,0,0], "tolerancia": 30}]. |
+| `points_file` | `null` | Arquivo .json/.csv com pontos de interesse (classe, nome, x_px, y_px ou x_mm, y_mm). null = nenhum. |
+| `marker_max_area_mm2` | `80.0` | Manchas de cor maiores que isso (mm2) não são tratadas como marcador. |
+| `negatives_px_per_mm` | `10.0` | Resolução dos negativos (pixels por mm). |
+| `negatives_line_mm` | `0.5` | Espessura (mm) da linha nas imagens de fronteiras. |
+| `negatives_point_radius_mm` | `1.2` | Raio (mm) da marca de cada ponto nas imagens de pontos. |
+| `random_seed` | `0` | Semente do k-means: o mesmo valor repete o mesmo resultado. |
 
-### Regiões (Parte 1)
+### Etapa 2 (`Etapa2Config`)
 | Parâmetro | Padrão | O que faz |
 |---|---|---|
-| `color_tolerance` | 10 | Grau de semelhança (ΔE em Lab). Vizinhas mais parecidas que isso viram uma região. ~2 quase imperceptível · ~10 mesma família de tons · 20+ funde cores distintas. Aumente se uma região de cor variável saiu dividida. |
-| `max_regions` | 12 | Teto de regiões; se houver mais, funde as mais parecidas até caber. |
-| `min_region_area_mm2` | 15 | Regiões menores são absorvidas pela vizinha de cor mais próxima (limpa "sujeira"). |
-| `n_color_clusters` | 16 | Cores iniciais do k-means, antes das fusões. Mantenha ≥ `max_regions`. |
-| `ignore_color` / `ignore_tolerance` | `None` / 15 | Cor RGB de fundo, ex.: `[255,255,255]`. A região dessa cor fica lisa. A tolerância diz quão próxima precisa ser. |
-| `denoise_iterations` | 2 | Passadas do filtro bilateral que suaviza cores sem borrar bordas (0 desliga). |
-| `denoise_sigma_color` / `denoise_sigma_space` | 25 / 7 | Força do filtro: quanto tons podem diferir / tamanho da vizinhança. Maior = borra mais. |
-| `random_seed` | 0 | Semente do k-means; o mesmo valor repete o mesmo resultado. |
+| `resolution_mm` | `0.1` | Passo da grade (mm). Menor = mais detalhe e STL maior (100x100 mm a 0,1 = ~200 MB; teste com 0,2-0,3). |
+| `base_thickness_mm` | `1.0` | Espessura (mm) da placa lisa sob todo o relevo. Deve ser > 0. |
+| `base_mode` | `retangular` | 'retangular' = placa inteira; 'silhueta' = a base segue o contorno das regiões escolhidas (o resto fica de fora). |
+| `base_regions` | `null` | Modo silhueta: ids das regiões que formam a base. null = todas as que não são fundo. |
+| `frame_cord` | `true` | true = cordão também em volta de toda a peça (moldura). |
+| `texture_amplitude_mm` | `0.6` | Altura (mm) dos relevos de textura acima da base. |
+| `ridge_profile` | `triangular` | Seção dos traços: 'triangular' (ponta arredondada) ou 'round'. |
+| `apex_round_mm` | `0.1` | Raio (mm) do arredondamento da ponta triangular. 0 = ponta viva. |
+| `default_textures` | `[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]` | Texturas usadas na SUGESTÃO inicial (texturas.json). Lista completa: python -m img_to_stl --list-textures. A lisa (0) não entra aqui: veja smooth_region. |
+| `smooth_region` | `externa` | Região que fica LISA na sugestão: 'externa' = a maior que toca a borda; 'maior' = a maior de todas; 'nenhuma'; ou nome/número de uma região. Não age se já houver fundo (ignore_color) ou lisa escolhida à mão. |
+| `texture_dir` | `null` | Pasta com texturas de CAD/PNG '<id>_<nome>.stl|png' (id >= 100). null = nenhuma. |
+| `min_feature_warn_mm` | `0.4` | Avisa se o menor traço, após distorção, ficar menor que isso (mm). |
+| `texture_params` | `{}` | Parâmetros próprios por textura, ex.: {"2": {"mini_ratio": 0.625}}. Nomes por textura no README. |
+| `border_width_mm` | `1.0` | Largura (mm) do cordão da fronteira. |
+| `border_height_mm` | `1.2` | Altura (mm) do cordão (semi-elipse). Ignorada se border_semicircle = true. |
+| `border_semicircle` | `false` | true = semicírculo perfeito (altura = largura/2). |
+| `border_exclusion_mm` | `1.0` | Faixa sem textura de cada lado, contada a partir da BORDA do cordão. |
+| `exclusion_fade_mm` | `0.3` | Rampa suave (mm) na saída da exclusão. 0 = degrau. |
+| `exclusion_texture_scale` | `0.5` | Escala da textura reduzida na zona de exclusão (0,5 = metade). 0 = faixa lisa. |
+| `exclusion_texture_height_factor` | `0.6` | Altura da textura reduzida relativa à normal (0,6 = 60%). |
+| `point_height_mm` | `1.4` | Altura (mm) do ponto acima da base. |
+| `point_size_mm` | `1.2` | Diâmetro (círculo) ou lado (quadrado/triângulo), em mm. |
+| `point_flank_mm` | `0.4` | Largura (mm) da rampa inclinada em volta da forma do ponto. |
+| `point_exclusion_mm` | `1.0` | Raio (mm) sem textura a partir do CENTRO do ponto. |
+| `point_shape` | `circle` | Forma padrão dos pontos: circle, square ou triangle. |
+| `point_shape_by_class` | `{"triplice": "triangle", "multiplo": "square"}` | Forma por classe de ponto, ex.: {"capital": "circle", "triplice": "triangle"}. |
+| `model_triple_points` | `false` | true = pontos tríplices viram relevo (desligado por padrão). |
+| `model_multiple_points` | `false` | true = pontos de 4+ regiões viram relevo (desligado por padrão). |
 
-### Fronteiras
-| Parâmetro | Padrão | O que faz |
+### Distorções de textura (em `texturas.json`)
+| Nome (posição) | Padrão | Efeito |
 |---|---|---|
-| `min_region_thickness_mm` | 1,0 | Traços/regiões mais finos que isso são apagados e preenchidos pela vizinhança: some o contorno preto de mapas, o serrilhado entre cores e texto fino; a fronteira passa pelo meio do traço. 0 = desligado. |
-| `min_border_length_mm` | 4 | Fronteira mais curta é **encolhida**: as duas junções viram uma só (não é apagada, para a rede de cordões não abrir fresta). |
-| `smooth_sigma_mm` | 0,5 | Suavização das curvas (tira o serrilhado). Maior = mais redondo, cantos amaciados. |
-| `simplify_tol_mm` | 0,12 | Simplificação Douglas-Peucker. Maior = menos pontos na curva, perfil mais facetado. |
-| `outer_frame` | `True` | Cordão também em volta de toda a peça. |
-| `border_width_mm` | 1,0 | Largura do cordão. |
-| `border_height_mm` | 1,2 | Altura do cordão (semi-elipse). Ignorada com `border_semicircle`. |
-| `border_semicircle` | `False` | `True` = semicírculo perfeito (altura = largura/2). |
-| `border_exclusion_mm` | 1,0 | Faixa sem textura de cada lado, contada a partir da **borda** do cordão. Faixa livre total = largura + 2×valor. Sugestão: 0,5–0,7. |
-| `exclusion_fade_mm` | 0,3 | Rampa suave na saída da exclusão (0 = degrau). |
-| `exclusion_texture_scale` | 0,5 | **Suavização:** na zona de exclusão (cordões e pontos) entra uma versão da textura reduzida a esta escala, em vez de deixá-la lisa. 0 = desligado. Traços ficam mais finos (avisa se < `min_feature_warn_mm`). |
-| `exclusion_texture_height_factor` | 0,6 | Altura da textura reduzida em relação à normal (0,6 = 60%). |
+| `escala` (1) | 1 | >1 amplia, <1 reduz o padrão |
+| `alongar` (2) | 1 | alonga ao longo de `angulo` |
+| `angulo` (3) | 0 | direção do alongamento (°) |
+| `cisalhar` (4) | 0 | inclina o padrão |
+| `rotacao` (5) | 0 | gira (°, anti-horário) |
+| `desloc_x`, `desloc_y` (6, 7) | 0 | desloca o padrão (mm) |
+| `onda_amp`, `onda_comp` (8, 9) | 0 / 20 | ondula o padrão: amplitude e comprimento de onda (mm) |
+| `amp` (só por nome) | `texture_amplitude_mm` | altura própria da região (mm) |
 
-### Pontos
-**Pontos de interesse** — marcas pontuais (capitais etc.). **A detecção ainda não existe**: hoje a lista de pontos sai vazia. O
-relevo e os negativos já sabem modelá-los; para testar, preencha `pmap.points` em Python
-(`InterestPoint(id, (x_mm, y_mm), shape, name)`; mm, y para cima, origem no canto inferior esquerdo).
-| Parâmetro | Padrão | O que faz |
-|---|---|---|
-| `point_shape` | `circle` | Forma padrão: `circle`, `square` ou `triangle` (cada ponto pode ter a sua). |
-| `point_size_mm` | 1,2 | Diâmetro (círculo) ou lado (quadrado/triângulo). |
-| `point_height_mm` | 1,4 | Altura do ponto acima da base. |
-| `point_flank_mm` | 0,4 | Largura da rampa inclinada em volta da forma. |
-| `point_exclusion_mm` | 1,0 | Raio sem textura a partir do **centro** (cresce sozinho se a forma for maior). |
-
-**Pontos de intersecção** (opcionais, **desligados** por padrão) — um ponto em cada encontro de 3 ou mais regiões:
-| Parâmetro | Padrão | O que faz |
-|---|---|---|
-| `junction_points` | `false` | `true` liga os pontos de intersecção. |
-| `min_regions_at_point` | 3 | Nº mínimo de regiões que se encontram para marcar o ponto. |
-| `point_merge_dist_mm` | 1,5 | Junções mais próximas que isso viram um ponto só. |
-| `max_points` | `None` | Mantém só os N pontos de maior valência (`None` = todos). |
-| `point_shapes` | `{3: triangle, 4: square}` | Forma pelo nº de regiões no ponto (`circle`, `square`, `triangle`); os demais usam `point_shape`. |
-Para ligar: `--junction-points` na linha de comando ou `"junction_points": true` no JSON.
-
-### Texturas
-| Parâmetro | Padrão | O que faz |
-|---|---|---|
-| `texture_amplitude_mm` | 0,6 | Altura dos relevos de textura acima da base. |
-| `ridge_profile` | `triangular` | Seção dos traços: `triangular` (ponta arredondada) ou `round`. |
-| `apex_round_mm` | 0,1 | Raio do arredondamento da ponta triangular (0 = ponta viva). |
-| `default_textures` | `[1,2,3,4,5]` | Texturas disponíveis para as regiões sem escolha manual. **Vizinhas nunca repetem a textura** e, havendo textura livre, nenhuma se repete na imagem; só repete se houver mais regiões que texturas (e, ainda assim, não entre vizinhas, se possível — o programa avisa). Escolhas manuais podem repetir. |
-| `region_textures` | `{}` | Escolha manual: `{id_região: id_textura}` ou dict com distorção (veja abaixo). |
-| `texture_dir` | `None` | Pasta com texturas de CAD/PNG (`<id>_<nome>.stl|png`, id ≥ 100). |
-| `texture_params` | `{}` | Parâmetros próprios por textura (tabela abaixo). |
-| `min_feature_warn_mm` | 0,4 | Aviso se o menor traço, após distorção, ficar menor que isso. |
-
-**Parâmetros por textura** (`texture_params`, ex.: `{"2": {"mini_ratio": 0.625}}`):
-| Textura | Parâmetros (padrão) |
-|---|---|
-| 1 linhas diagonais | `pitch` 2,5 (distância entre linhas) · `width` 0,8 (largura da linha) · `direction` −1/+1 (sentido da diagonal) |
-| 2 X's | `cell` 5 (lado do mini-tile) · `w_big` 0,8 / `w_mini` 0,6 (largura dos traços do X grande / mini) · `mini_ratio` 0,75 (fração do espaço entre pernas ocupada pelo mini-X) · `corner_height` 0 (altura onde as pontas dos X grandes se encontram; 0 = rebaixa até a base) · `corner_gap` (folga extra nas pontas) |
-| 3 ondas | `wavelength` 5 (comprimento de onda) · `wave_amplitude` 1,0 (quanto a linha ondula, mm) · `pitch` 2,5 · `width` 0,8 |
-| 4 escamas | `scale_width` 5 (largura de cada escama) · `width` 0,8 (largura do traço) |
-| 5 losangos | `diag_x` 5 / `diag_y` 5 (diagonais do losango) · `apex_round` 0 (arredonda o topo) |
-
-### Distorção por região (`region_textures`)
-| Chave | O que faz |
-|---|---|
-| `texture` | Id da textura. |
-| `amplitude_mm` | Altura própria desta região (senão usa `texture_amplitude_mm`). |
-| `scale` | >1 amplia o padrão, <1 reduz. |
-| `stretch`, `stretch_angle_deg` | Alonga o padrão `stretch`× na direção do ângulo. |
-| `shear` | Inclina o padrão. |
-| `rotation_deg`, `offset_mm` | Giram e deslocam `[x, y]` o padrão. |
-| `warp_amplitude_mm`, `warp_wavelength_mm` | Ondulam o padrão ("tortinho"): quanto desloca e a cada quantos mm. |
-
-- Fronteiras são traçadas entre pixels: regiões vizinhas **compartilham exatamente a mesma curva**.
-- A rede de fronteiras é **contínua**: toda fronteira termina numa junção (ou é um laço fechado); não há pontas soltas nem frestas. Encontros de regiões só geram pontos se `junction_points` estiver ligado (padrão: desligado).
-- Imagens com **contornos pretos** (mapas): o filtro `min_region_thickness_mm` remove as linhas finas antes de separar as regiões. Regiões de uma mesma cor separadas por linhas (ex.: estados) viram uma só.
-
-### Saídas (`output`)
-| Parâmetro | Padrão | O que faz |
-|---|---|---|
-| `base_dir` | `saida` | Pasta-base; cada imagem ganha a subpasta `<base_dir>/<nome_da_imagem>/`. |
-| `negatives` | `true` | Grava a pasta `negativos/` (regiões, fronteiras e pontos em preto e branco). |
-| `negatives_px_per_mm` | 10 | Resolução dos negativos em pixels por mm (limitada a ~4000 px no lado maior). |
+A distorção é geométrica: a largura dos traços muda junto. Para manter a largura e mudar só o espaçamento use `texture_params`
+(ex.: `{"2": {"mini_ratio": 0.625}}`). O código avisa se algum traço ficar menor que `min_feature_warn_mm`.
